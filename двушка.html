@@ -64,7 +64,7 @@
       width: 40px;
       height: 70px;
       background: #00c853;
-      bottom: 150px;
+      bottom: 160px;
       left: 50%;
       transform: translateX(-50%);
       border-radius: 8px;
@@ -287,7 +287,7 @@
     </div>
   </div>
 
-  <!-- Кнопки управления (оставим как доп-опцию) -->
+  <!-- Кнопки управления (доп-опция) -->
   <div id="raceControls">
     <button class="ctrl-btn" id="leftBtn">◀</button>
     <button class="ctrl-btn" id="rightBtn">▶</button>
@@ -345,6 +345,9 @@
       navigator.vibrate(pattern);
     }
   }
+
+  // константа: "внутренние края" дороги (чуть отступаем от бордюров)
+  const ROAD_MARGIN = 8;
 
   // состояние игры
   let laneLines = [];
@@ -423,7 +426,7 @@
         snapshot.forEach(child => {
           list.push(child.val());
         });
-        list.reverse(); // от большего к меньшему
+        list.reverse();
 
         leaderboardList.innerHTML = '';
         if (list.length === 0) {
@@ -473,7 +476,8 @@
   function resetRaceCar() {
     const rect = road.getBoundingClientRect();
     const carWidth = raceCar.offsetWidth || 40;
-    const x = (rect.width - carWidth) / 2;
+    const innerWidth = rect.width - ROAD_MARGIN * 2;
+    const x = ROAD_MARGIN + (innerWidth - carWidth) / 2;
     raceCar.style.left = x + 'px';
     targetCarX = x;
   }
@@ -513,18 +517,21 @@
     );
   }
 
-  // Машина двигается за пальцем (по всему экрану), но в пределах дороги
+  // Машина двигается за пальцем (по всему экрану), но в пределах дороги + margin
   function updateTargetFromPointer(e) {
     if (!running) return;
     const rect = road.getBoundingClientRect();
     const carWidth = raceCar.offsetWidth || 40;
 
     let rel = e.clientX - rect.left;
-    // если палец совсем вне дороги — просто прижимаем к краю
-    rel = Math.max(0, Math.min(rel, rect.width));
+    const minRel = ROAD_MARGIN;
+    const maxRel = rect.width - ROAD_MARGIN;
+    rel = Math.max(minRel, Math.min(rel, maxRel));
 
     let x = rel - carWidth / 2;
-    x = Math.max(0, Math.min(x, rect.width - carWidth));
+    const minX = ROAD_MARGIN;
+    const maxX = rect.width - carWidth - ROAD_MARGIN;
+    x = Math.max(minX, Math.min(x, maxX));
     targetCarX = x;
   }
 
@@ -538,7 +545,7 @@
     updateTargetFromPointer(e);
   }, { passive: false });
 
-  // Кнопки влево/вправо (дополнительное управление — двигаем targetCarX)
+  // Кнопки влево/вправо (двигаем targetCarX)
   leftBtn.addEventListener('pointerdown', () => { moveDirection = -1; });
   rightBtn.addEventListener('pointerdown', () => { moveDirection = 1; });
   ['pointerup','pointerleave','pointercancel'].forEach(ev => {
@@ -552,7 +559,9 @@
     const carWidth = raceCar.offsetWidth || 40;
     const current = (targetCarX == null ? raceCar.offsetLeft : targetCarX);
     let x = current + moveDirection * moveStep;
-    x = Math.max(0, Math.min(x, rect.width - carWidth));
+    const minX = ROAD_MARGIN;
+    const maxX = rect.width - carWidth - ROAD_MARGIN;
+    x = Math.max(minX, Math.min(x, maxX));
     targetCarX = x;
   }
 
@@ -633,7 +642,7 @@
     }
 
     const effectiveSpeed = speed * speedFactor;
-    const kmh = Math.round(effectiveSpeed * 20); // условная конвертация в км/ч
+    const kmh = Math.round(effectiveSpeed * 20);
     speedEl.textContent = kmh;
 
     laneLines.forEach(line => {
@@ -644,13 +653,13 @@
       line.style.top = top + 'px';
     });
 
-    // кнопки
+    // кнопки (двигают target)
     moveRaceCarButtons();
 
-    // плавно тянем машину к целевой позиции
+    // ПЛАВНО тянем машину к целевой позиции
     if (targetCarX != null) {
       const current = raceCar.offsetLeft;
-      const lerpFactor = 0.25; // 0..1 — чем выше, тем меньше "плавности"
+      const lerpFactor = 0.12; // чем меньше — тем плавнее
       const next = current + (targetCarX - current) * lerpFactor;
       raceCar.style.left = next + 'px';
     }
