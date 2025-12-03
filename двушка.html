@@ -5,7 +5,7 @@
   <title>Кофе-дром: Обгон</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 
-  <!-- Firebase SDK (compat-версия, чтобы работать без сборщиков) -->
+  <!-- Firebase SDK (compat) -->
   <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
 
@@ -114,36 +114,6 @@
     }
     #hud span.value {
       font-weight: 700;
-    }
-
-    /* Кнопка Nitro — снизу слева */
-    .nitro-btn {
-      position: absolute;
-      bottom: 100px;
-      left: 10px;
-      z-index: 7;
-      padding: 6px 14px;
-      font-size: 14px;
-      border-radius: 999px;
-      background: #ff6d00;
-      color: #000;
-      font-weight: 700;
-      border: none;
-      box-shadow: 0 0 10px rgba(255,109,0,0.7);
-    }
-    .nitro-btn:active {
-      transform: scale(0.96);
-    }
-    .nitro-btn.cooldown {
-      background: #555;
-      color: #ccc;
-      opacity: 0.6;
-      box-shadow: none;
-    }
-    .nitro-btn.active {
-      background: #ffffff;
-      color: #000;
-      box-shadow: 0 0 14px rgba(255,255,255,0.9);
     }
 
     /* Оверлеи */
@@ -274,12 +244,10 @@
   <div id="hud">
     <div>Игрок: <span id="playerNameLabel" class="value">Гость</span></div>
     <div>Обогнал: <span id="score" class="value">0</span></div>
-    <div>Скорость: <span id="speed" class="value">1</span>x</div>
+    <div>Скорость: <span id="speed" class="value">0</span> км/ч</div>
+    <div>Жизни: <span id="lives" class="value">3</span></div>
     <div>Рекорд: <span id="bestScore" class="value">0</span></div>
   </div>
-
-  <!-- Кнопка Nitro -->
-  <button id="nitroBtn" class="nitro-btn">Nitro</button>
 
   <!-- Загрузочный экран -->
   <div id="introScreen" class="overlay" style="display:flex;">
@@ -348,6 +316,7 @@
   const raceCar = document.getElementById('raceCar');
   const scoreEl = document.getElementById('score');
   const speedEl = document.getElementById('speed');
+  const livesEl = document.getElementById('lives');
   const bestScoreEl = document.getElementById('bestScore');
   const playerNameLabel = document.getElementById('playerNameLabel');
 
@@ -366,7 +335,6 @@
 
   const leftBtn = document.getElementById('leftBtn');
   const rightBtn = document.getElementById('rightBtn');
-  const nitroBtn = document.getElementById('nitroBtn');
   const gameEl = document.getElementById('game');
   const leaderboardList = document.getElementById('leaderboardList');
 
@@ -391,6 +359,11 @@
   const moveStep = 6;
   let running = false;
   let lastTime = 0;
+
+  // жизни
+  let lives = 3;
+  const maxLives = 3;
+  let invulnerableUntil = 0;
 
   // рекорд (общий, из Firebase)
   let bestScore = 0;
@@ -466,7 +439,7 @@
       });
   }
 
-  // Nitro
+  // Nitro (двойной тап по машине)
   let isNitroActive = false;
   let nitroEndTime = 0;
   let nitroCooldownEndTime = 0;
@@ -474,10 +447,10 @@
   const NITRO_COOLDOWN = 6000;
   const NITRO_MULTIPLIER = 2.2;
 
-  // Slow-motion от кофе
+  // Slow-motion от удара
   let isSlowMotionActive = false;
   let slowMotionEndTime = 0;
-  const SLOW_MOTION_DURATION = 3500;
+  const SLOW_MOTION_DURATION = 1200;
   const SLOW_MOTION_FACTOR = 0.5;
 
   function createLaneLines() {
@@ -510,7 +483,6 @@
     enemy.style.top = '-90px';
     road.appendChild(enemy);
     enemies.push({ el: enemy, y: -90 });
-
     if (Math.random() < 0.15) {
       spawnBonus();
     }
@@ -536,16 +508,17 @@
     );
   }
 
-  // Управление пальцем
-  road.addEventListener('pointermove', e => {
+  // Машина двигается за пальцем по всему экрану, но в пределах дороги
+  gameEl.addEventListener('pointermove', e => {
     if (!running) return;
     const rect = road.getBoundingClientRect();
+    const margin = 6;
     let x = e.clientX - rect.left - raceCar.offsetWidth / 2;
-    x = Math.max(0, Math.min(x, rect.width - raceCar.offsetWidth));
+    x = Math.max(margin, Math.min(x, rect.width - raceCar.offsetWidth - margin));
     raceCar.style.left = x + 'px';
   });
 
-  // Кнопки влево/вправо
+  // Кнопки влево/вправо (оставляем как доп-управление)
   leftBtn.addEventListener('pointerdown', () => { moveDirection = -1; });
   rightBtn.addEventListener('pointerdown', () => { moveDirection = 1; });
   ['pointerup','pointerleave','pointercancel'].forEach(ev => {
@@ -556,9 +529,40 @@
   function moveRaceCarButtons() {
     if (!running) return;
     const rect = road.getBoundingClientRect();
+    const margin = 6;
     let x = raceCar.offsetLeft + moveDirection * moveStep;
-    x = Math.max(0, Math.min(x, rect.width - raceCar.offsetWidth));
+    x = Math.max(margin, Math.min(x, rect.width - raceCar.offsetWidth - margin));
     raceCar.style.left = x + 'px';
+  }
+
+  // Nitro — двойной тап по машине + защита от зума
+  let lastTapTime = 0;
+
+  raceCar.addEventListener('pointerdown', (e) => {
+    if (!running) return;
+    const now = performance.now();
+    if (now - lastTapTime < 300) {
+      activateNitro(now);
+    }
+    lastTapTime = now;
+  });
+
+  raceCar.addEventListener('touchstart', (e) => {
+    // блокируем двойной тап-зум на iOS
+    e.preventDefault();
+  }, { passive: false });
+
+  raceCar.addEventListener('dblclick', (e) => {
+    e.preventDefault();
+  }, { passive: false });
+
+  function activateNitro(now) {
+    if (!running) return;
+    if (isNitroActive) return;
+    if (now < nitroCooldownEndTime) return;
+    isNitroActive = true;
+    nitroEndTime = now + NITRO_DURATION;
+    gameEl.classList.add('nitro-mode');
   }
 
   function triggerSlowMotion(timestamp) {
@@ -567,33 +571,24 @@
     gameEl.classList.add('slow-motion');
   }
 
-  function updateNitroButtonState(now) {
-    if (isNitroActive) {
-      nitroBtn.classList.add('active');
-      nitroBtn.classList.remove('cooldown');
-      nitroBtn.disabled = true;
-    } else if (now < nitroCooldownEndTime) {
-      nitroBtn.classList.remove('active');
-      nitroBtn.classList.add('cooldown');
-      nitroBtn.disabled = true;
-    } else {
-      nitroBtn.classList.remove('active');
-      nitroBtn.classList.remove('cooldown');
-      nitroBtn.disabled = false;
+  function handleCollision(timestamp, enemyIndex) {
+    if (timestamp < invulnerableUntil) return;
+
+    if (enemyIndex != null && enemies[enemyIndex]) {
+      enemies[enemyIndex].el.remove();
+      enemies.splice(enemyIndex, 1);
+    }
+
+    lives--;
+    livesEl.textContent = lives;
+    vibrate([120, 60, 120]);
+    triggerSlowMotion(timestamp);
+    invulnerableUntil = timestamp + 1500;
+
+    if (lives <= 0) {
+      endGame();
     }
   }
-
-  nitroBtn.addEventListener('click', () => {
-    if (!running) return;
-    const now = performance.now();
-    if (isNitroActive) return;
-    if (now < nitroCooldownEndTime) return;
-
-    isNitroActive = true;
-    nitroEndTime = now + NITRO_DURATION;
-    gameEl.classList.add('nitro-mode');
-    updateNitroButtonState(now);
-  });
 
   function updateGame(timestamp, delta) {
     let speedFactor = 1;
@@ -616,10 +611,10 @@
         speedFactor = NITRO_MULTIPLIER;
       }
     }
-    updateNitroButtonState(timestamp);
 
     const effectiveSpeed = speed * speedFactor;
-    speedEl.textContent = (speed * speedFactor).toFixed(1);
+    const kmh = Math.round(effectiveSpeed * 20); // условная конвертация в км/ч
+    speedEl.textContent = kmh;
 
     laneLines.forEach(line => {
       let top = parseFloat(line.style.top);
@@ -642,8 +637,9 @@
 
       const enemyRect = obj.el.getBoundingClientRect();
       if (isColliding(playerRect, enemyRect)) {
-        endGame();
-        return;
+        handleCollision(timestamp, i);
+        if (!running || lives <= 0) return;
+        continue;
       }
 
       if (obj.y > roadRect.height + 100) {
@@ -708,7 +704,11 @@
     spawnInterval = 900;
     moveDirection = 0;
     scoreEl.textContent = score;
-    speedEl.textContent = '1';
+    speedEl.textContent = '0';
+
+    lives = maxLives;
+    livesEl.textContent = lives;
+    invulnerableUntil = 0;
 
     createLaneLines();
     raceCar.style.display = 'block';
@@ -724,7 +724,6 @@
     slowMotionEndTime = 0;
     gameEl.classList.remove('nitro-mode');
     gameEl.classList.remove('slow-motion');
-    updateNitroButtonState(performance.now());
 
     loadGlobalBestScore();
 
@@ -801,6 +800,11 @@
     }, { passive: false });
 
     document.addEventListener('gesturestart', (e) => e.preventDefault(), { passive: false });
+
+    // доп. защита от дабл-тап зума по всей странице
+    document.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+    }, { passive: false });
   })();
 </script>
 </body>
