@@ -287,7 +287,7 @@
     </div>
   </div>
 
-  <!-- Кнопки управления -->
+  <!-- Кнопки управления (оставим как доп-опцию) -->
   <div id="raceControls">
     <button class="ctrl-btn" id="leftBtn">◀</button>
     <button class="ctrl-btn" id="rightBtn">▶</button>
@@ -359,6 +359,9 @@
   const moveStep = 6;
   let running = false;
   let lastTime = 0;
+
+  // плавное движение машины
+  let targetCarX = null;
 
   // жизни
   let lives = 3;
@@ -469,8 +472,10 @@
 
   function resetRaceCar() {
     const rect = road.getBoundingClientRect();
-    const carWidth = raceCar.offsetWidth;
-    raceCar.style.left = (rect.width / 2 - carWidth / 2) + 'px';
+    const carWidth = raceCar.offsetWidth || 40;
+    const x = (rect.width - carWidth) / 2;
+    raceCar.style.left = x + 'px';
+    targetCarX = x;
   }
 
   function spawnEnemy() {
@@ -508,17 +513,32 @@
     );
   }
 
-  // Машина двигается за пальцем по всему экрану, но в пределах дороги
-  gameEl.addEventListener('pointermove', e => {
+  // Машина двигается за пальцем (по всему экрану), но в пределах дороги
+  function updateTargetFromPointer(e) {
     if (!running) return;
     const rect = road.getBoundingClientRect();
-    const margin = 6;
-    let x = e.clientX - rect.left - raceCar.offsetWidth / 2;
-    x = Math.max(margin, Math.min(x, rect.width - raceCar.offsetWidth - margin));
-    raceCar.style.left = x + 'px';
-  });
+    const carWidth = raceCar.offsetWidth || 40;
 
-  // Кнопки влево/вправо (оставляем как доп-управление)
+    let rel = e.clientX - rect.left;
+    // если палец совсем вне дороги — просто прижимаем к краю
+    rel = Math.max(0, Math.min(rel, rect.width));
+
+    let x = rel - carWidth / 2;
+    x = Math.max(0, Math.min(x, rect.width - carWidth));
+    targetCarX = x;
+  }
+
+  gameEl.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    updateTargetFromPointer(e);
+  }, { passive: false });
+
+  gameEl.addEventListener('pointermove', (e) => {
+    e.preventDefault();
+    updateTargetFromPointer(e);
+  }, { passive: false });
+
+  // Кнопки влево/вправо (дополнительное управление — двигаем targetCarX)
   leftBtn.addEventListener('pointerdown', () => { moveDirection = -1; });
   rightBtn.addEventListener('pointerdown', () => { moveDirection = 1; });
   ['pointerup','pointerleave','pointercancel'].forEach(ev => {
@@ -529,10 +549,11 @@
   function moveRaceCarButtons() {
     if (!running) return;
     const rect = road.getBoundingClientRect();
-    const margin = 6;
-    let x = raceCar.offsetLeft + moveDirection * moveStep;
-    x = Math.max(margin, Math.min(x, rect.width - raceCar.offsetWidth - margin));
-    raceCar.style.left = x + 'px';
+    const carWidth = raceCar.offsetWidth || 40;
+    const current = (targetCarX == null ? raceCar.offsetLeft : targetCarX);
+    let x = current + moveDirection * moveStep;
+    x = Math.max(0, Math.min(x, rect.width - carWidth));
+    targetCarX = x;
   }
 
   // Nitro — двойной тап по машине + защита от зума
@@ -548,7 +569,6 @@
   });
 
   raceCar.addEventListener('touchstart', (e) => {
-    // блокируем двойной тап-зум на iOS
     e.preventDefault();
   }, { passive: false });
 
@@ -624,7 +644,16 @@
       line.style.top = top + 'px';
     });
 
+    // кнопки
     moveRaceCarButtons();
+
+    // плавно тянем машину к целевой позиции
+    if (targetCarX != null) {
+      const current = raceCar.offsetLeft;
+      const lerpFactor = 0.25; // 0..1 — чем выше, тем меньше "плавности"
+      const next = current + (targetCarX - current) * lerpFactor;
+      raceCar.style.left = next + 'px';
+    }
 
     const roadRect = road.getBoundingClientRect();
     const playerRect = raceCar.getBoundingClientRect();
@@ -801,7 +830,6 @@
 
     document.addEventListener('gesturestart', (e) => e.preventDefault(), { passive: false });
 
-    // доп. защита от дабл-тап зума по всей странице
     document.addEventListener('dblclick', (e) => {
       e.preventDefault();
     }, { passive: false });
