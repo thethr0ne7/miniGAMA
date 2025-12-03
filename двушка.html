@@ -4,6 +4,11 @@
   <meta charset="UTF-8" />
   <title>Кофе-дром: Обгон</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+
+  <!-- Firebase SDK (compat-версия, чтобы работать без сборщиков) -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
+
   <style>
     * { box-sizing: border-box; }
     html, body {
@@ -53,13 +58,13 @@
       opacity: 0.7;
     }
 
-    /* Машина игрока (ещё выше) */
+    /* Машина игрока (поднята повыше) */
     #raceCar {
       position: absolute;
       width: 40px;
       height: 70px;
       background: #00c853;
-      bottom: 150px; /* было 110px */
+      bottom: 150px;
       left: 50%;
       transform: translateX(-50%);
       border-radius: 8px;
@@ -98,17 +103,20 @@
       left: 50%;
       transform: translateX(-50%);
       display: flex;
-      gap: 16px;
-      font-size: 14px;
+      gap: 10px;
+      font-size: 13px;
       z-index: 5;
       text-shadow: 0 0 4px #000;
       align-items: center;
+      flex-wrap: wrap;
+      justify-content: center;
+      max-width: 95vw;
     }
     #hud span.value {
       font-weight: 700;
     }
 
-    /* Кнопка Nitro — теперь снизу слева */
+    /* Кнопка Nitro — снизу слева */
     .nitro-btn {
       position: absolute;
       bottom: 100px;
@@ -183,6 +191,7 @@
       background: #ffb300;
       color: #000;
       font-weight: 600;
+      cursor: pointer;
     }
     button:active {
       transform: scale(0.96);
@@ -192,6 +201,25 @@
     #gameOver {
       flex-direction: column;
       gap: 8px;
+    }
+
+    /* Лидерборд */
+    #leaderboard {
+      margin-top: 10px;
+      text-align: left;
+      max-width: 260px;
+      margin-left: auto;
+      margin-right: auto;
+      font-size: 14px;
+    }
+    #leaderboard h3 {
+      margin: 6px 0;
+      font-size: 16px;
+      text-align: center;
+    }
+    #leaderboard ol {
+      margin: 0;
+      padding-left: 20px;
     }
 
     /* Кнопки управления */
@@ -244,6 +272,7 @@
   </div>
 
   <div id="hud">
+    <div>Игрок: <span id="playerNameLabel" class="value">Гость</span></div>
     <div>Обогнал: <span id="score" class="value">0</span></div>
     <div>Скорость: <span id="speed" class="value">1</span>x</div>
     <div>Рекорд: <span id="bestScore" class="value">0</span></div>
@@ -252,13 +281,19 @@
   <!-- Кнопка Nitro -->
   <button id="nitroBtn" class="nitro-btn">Nitro</button>
 
-  <!-- Загрузочный экран с анимацией надписи -->
+  <!-- Загрузочный экран -->
   <div id="introScreen" class="overlay" style="display:flex;">
     <div>
       <h1>Кофе-дром ☕🏁</h1>
       <p class="intro-text">
         Объезжай машины, пока ждёшь свой кофе.
       </p>
+
+      <input id="playerNameInput"
+             type="text"
+             placeholder="Введи своё имя"
+             style="margin-top:12px;padding:8px 12px;border-radius:999px;border:none;width:220px;text-align:center;" />
+
       <button id="introBtn">Поехали</button>
     </div>
   </div>
@@ -277,6 +312,11 @@
     </div>
 
     <p id="coffeeMsg" style="margin-top:10px;font-size:16px;font-weight:500;"></p>
+
+    <div id="leaderboard">
+      <h3>Топ пилотов</h3>
+      <ol id="leaderboardList"></ol>
+    </div>
   </div>
 
   <!-- Кнопки управления -->
@@ -287,14 +327,33 @@
 </div>
 
 <script>
+  /* ===== Firebase init с твоим config ===== */
+  const firebaseConfig = {
+    apiKey: "AIzaSyBNfjarQbrPjloE--eAtl-RXeW11uPPXdc",
+    authDomain: "coffe-drom.firebaseapp.com",
+    databaseURL: "https://coffe-drom-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "coffe-drom",
+    storageBucket: "coffe-drom.firebasestorage.app",
+    messagingSenderId: "510024503818",
+    appId: "1:510024503818:web:83b2a5258a7426a4a485f3"
+  };
+
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
+  const bestScoreRef = db.ref('coffeeRacer/globalBestScore');
+  const scoresRef = db.ref('coffeeRacer/scores');
+
+  /* ===== DOM ===== */
   const road = document.getElementById('road');
   const raceCar = document.getElementById('raceCar');
   const scoreEl = document.getElementById('score');
   const speedEl = document.getElementById('speed');
   const bestScoreEl = document.getElementById('bestScore');
+  const playerNameLabel = document.getElementById('playerNameLabel');
 
   const introScreen = document.getElementById('introScreen');
   const introBtn = document.getElementById('introBtn');
+  const playerNameInput = document.getElementById('playerNameInput');
 
   const gameOver = document.getElementById('gameOver');
   const finalScoreEl = document.getElementById('finalScore');
@@ -309,8 +368,10 @@
   const rightBtn = document.getElementById('rightBtn');
   const nitroBtn = document.getElementById('nitroBtn');
   const gameEl = document.getElementById('game');
+  const leaderboardList = document.getElementById('leaderboardList');
 
-  // вибро
+  let playerName = 'Гость';
+
   function vibrate(pattern) {
     if (navigator.vibrate) {
       navigator.vibrate(pattern);
@@ -331,23 +392,92 @@
   let running = false;
   let lastTime = 0;
 
-  // рекорд
-  let bestScore = parseInt(localStorage.getItem('coffeeRacerBest') || '0', 10);
-  if (isNaN(bestScore)) bestScore = 0;
-  bestScoreEl.textContent = bestScore;
+  // рекорд (общий, из Firebase)
+  let bestScore = 0;
+
+  function loadGlobalBestScore() {
+    bestScoreRef.once('value').then(snapshot => {
+      const val = snapshot.val();
+      if (typeof val === 'number') {
+        bestScore = val;
+        bestScoreEl.textContent = bestScore;
+      } else {
+        bestScore = 0;
+        bestScoreEl.textContent = '0';
+      }
+    }).catch(err => {
+      console.warn('Не удалось получить глобальный рекорд из Firebase', err);
+    });
+  }
+
+  function updateGlobalBestScoreIfNeeded(score) {
+    bestScoreRef.transaction(current => {
+      if (current === null || typeof current !== 'number') {
+        return score;
+      }
+      return score > current ? score : current;
+    }).then(result => {
+      if (result.committed) {
+        const newBest = result.snapshot.val();
+        bestScore = newBest;
+        bestScoreEl.textContent = bestScore;
+        bestScoreEndEl.textContent = bestScore;
+      }
+    }).catch(err => {
+      console.warn('Не удалось обновить глобальный рекорд в Firebase', err);
+    });
+  }
+
+  function submitScore(name, score) {
+    return scoresRef.push({
+      name: name || 'Гость',
+      score,
+      ts: firebase.database.ServerValue.TIMESTAMP
+    });
+  }
+
+  function loadLeaderboard() {
+    leaderboardList.innerHTML = '<li>Загрузка...</li>';
+    scoresRef
+      .orderByChild('score')
+      .limitToLast(10)
+      .once('value')
+      .then(snapshot => {
+        const list = [];
+        snapshot.forEach(child => {
+          list.push(child.val());
+        });
+        list.reverse(); // от большего к меньшему
+
+        leaderboardList.innerHTML = '';
+        if (list.length === 0) {
+          leaderboardList.innerHTML = '<li>Пока никто не играл</li>';
+          return;
+        }
+        list.forEach((item) => {
+          const li = document.createElement('li');
+          li.textContent = `${item.name || 'Гость'} — ${item.score}`;
+          leaderboardList.appendChild(li);
+        });
+      })
+      .catch(err => {
+        console.warn('Не удалось загрузить таблицу лидеров', err);
+        leaderboardList.innerHTML = '<li>Ошибка загрузки</li>';
+      });
+  }
 
   // Nitro
   let isNitroActive = false;
   let nitroEndTime = 0;
   let nitroCooldownEndTime = 0;
-  const NITRO_DURATION = 2500;   // мс
-  const NITRO_COOLDOWN = 6000;  // мс
+  const NITRO_DURATION = 2500;
+  const NITRO_COOLDOWN = 6000;
   const NITRO_MULTIPLIER = 2.2;
 
   // Slow-motion от кофе
   let isSlowMotionActive = false;
   let slowMotionEndTime = 0;
-  const SLOW_MOTION_DURATION = 3500; // мс
+  const SLOW_MOTION_DURATION = 3500;
   const SLOW_MOTION_FACTOR = 0.5;
 
   function createLaneLines() {
@@ -381,7 +511,6 @@
     road.appendChild(enemy);
     enemies.push({ el: enemy, y: -90 });
 
-    // шанс заспавнить кофейный бонус
     if (Math.random() < 0.15) {
       spawnBonus();
     }
@@ -407,7 +536,7 @@
     );
   }
 
-  // Управление пальцем (по дороге)
+  // Управление пальцем
   road.addEventListener('pointermove', e => {
     if (!running) return;
     const rect = road.getBoundingClientRect();
@@ -416,7 +545,7 @@
     raceCar.style.left = x + 'px';
   });
 
-  // Кнопки управления
+  // Кнопки влево/вправо
   leftBtn.addEventListener('pointerdown', () => { moveDirection = -1; });
   rightBtn.addEventListener('pointerdown', () => { moveDirection = 1; });
   ['pointerup','pointerleave','pointercancel'].forEach(ev => {
@@ -467,10 +596,8 @@
   });
 
   function updateGame(timestamp, delta) {
-    // множитель скорости
     let speedFactor = 1;
 
-    // слоу-мо от кофе
     if (isSlowMotionActive) {
       if (timestamp >= slowMotionEndTime) {
         isSlowMotionActive = false;
@@ -480,7 +607,6 @@
       }
     }
 
-    // Nitro
     if (isNitroActive) {
       if (timestamp >= nitroEndTime) {
         isNitroActive = false;
@@ -495,7 +621,6 @@
     const effectiveSpeed = speed * speedFactor;
     speedEl.textContent = (speed * speedFactor).toFixed(1);
 
-    // разметка
     laneLines.forEach(line => {
       let top = parseFloat(line.style.top);
       top += effectiveSpeed * 2;
@@ -557,7 +682,6 @@
       }
     }
 
-    // спавн врагов
     if (timestamp - lastSpawn > spawnInterval) {
       spawnEnemy();
       lastSpawn = timestamp;
@@ -602,6 +726,8 @@
     gameEl.classList.remove('slow-motion');
     updateNitroButtonState(performance.now());
 
+    loadGlobalBestScore();
+
     running = true;
     lastTime = performance.now();
     lastSpawn = lastTime;
@@ -619,12 +745,10 @@
 
     finalScoreEl.textContent = score;
 
-    if (score > bestScore) {
-      bestScore = score;
-      localStorage.setItem('coffeeRacerBest', String(bestScore));
-      bestScoreEl.textContent = bestScore;
-    }
-    bestScoreEndEl.textContent = bestScore;
+    updateGlobalBestScoreIfNeeded(score);
+    submitScore(playerName, score).then(() => {
+      loadLeaderboard();
+    });
 
     let text = '';
     if (score < 10) text = 'Похоже, ты только выехал из бокса.';
@@ -636,7 +760,6 @@
     gameOver.style.display = 'flex';
   }
 
-  // Кнопки после проигрыша
   coffeeNotReadyBtn.onclick = () => {
     coffeeMsg.textContent = 'Попробуй ещё раз, если кофе ещё не готов ☕';
     setTimeout(() => {
@@ -653,13 +776,15 @@
     startGame();
   };
 
-  // Интро -> старт игры
   introBtn.onclick = () => {
+    const name = (playerNameInput.value || '').trim();
+    playerName = name || 'Гость';
+    playerNameLabel.textContent = playerName;
     introScreen.style.display = 'none';
     startGame();
   };
 
-  /* ===== ПОЛНАЯ БЛОКИРОВКА СКРОЛЛИНГА И ЗУМА ===== */
+  /* ===== Блокировка скролла и зума ===== */
   (function preventScrolling() {
     const block = (e) => e.preventDefault();
 
