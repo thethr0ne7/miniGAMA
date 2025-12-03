@@ -6,12 +6,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <style>
     * { box-sizing: border-box; }
-    body {
+    html, body {
       margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+    }
+    body {
       background: #111;
       font-family: system-ui, sans-serif;
       color: #fff;
-      overflow: hidden;
       touch-action: none;
     }
     #game {
@@ -20,6 +24,7 @@
       position: relative;
       overflow: hidden;
       background: radial-gradient(circle at top, #333 0, #111 60%);
+      transition: background 0.2s ease, transform 0.2s ease;
     }
 
     /* Дорога */
@@ -34,6 +39,7 @@
       border-left: 6px solid #777;
       border-right: 6px solid #777;
       overflow: hidden;
+      transition: filter 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
     }
 
     /* Разметка */
@@ -47,13 +53,13 @@
       opacity: 0.7;
     }
 
-    /* Машина игрока (поднята выше, чтобы её не закрывали пальцы) */
+    /* Машина игрока (поднята выше, чтобы пальцы не закрывали) */
     #raceCar {
       position: absolute;
       width: 40px;
       height: 70px;
       background: #00c853;
-      bottom: 110px; /* БЫЛО 20px — теперь машина намного выше */
+      bottom: 110px;
       left: 50%;
       transform: translateX(-50%);
       border-radius: 8px;
@@ -71,6 +77,20 @@
       box-shadow: 0 0 10px rgba(0,0,0,0.6);
     }
 
+    /* Кофейный бонус */
+    .bonus {
+      position: absolute;
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      background: radial-gradient(circle at top, #ffe0b2 0, #ff9800 70%, #e65100 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      box-shadow: 0 0 10px rgba(255,152,0,0.8);
+    }
+
     /* HUD */
     #hud {
       position: absolute;
@@ -79,9 +99,43 @@
       transform: translateX(-50%);
       display: flex;
       gap: 16px;
-      font-size: 16px;
+      font-size: 14px;
       z-index: 5;
       text-shadow: 0 0 4px #000;
+      align-items: center;
+    }
+    #hud span.value {
+      font-weight: 700;
+    }
+
+    /* Кнопка Nitro */
+    .nitro-btn {
+      position: absolute;
+      top: 8px;
+      right: 10px;
+      z-index: 7;
+      padding: 6px 14px;
+      font-size: 14px;
+      border-radius: 999px;
+      background: #ff6d00;
+      color: #000;
+      font-weight: 700;
+      border: none;
+      box-shadow: 0 0 10px rgba(255,109,0,0.7);
+    }
+    .nitro-btn:active {
+      transform: scale(0.96);
+    }
+    .nitro-btn.cooldown {
+      background: #555;
+      color: #ccc;
+      opacity: 0.6;
+      box-shadow: none;
+    }
+    .nitro-btn.active {
+      background: #ffffff;
+      color: #000;
+      box-shadow: 0 0 14px rgba(255,255,255,0.9);
     }
 
     /* Оверлеи */
@@ -159,6 +213,28 @@
       color: #fff;
       font-size: 28px;
     }
+
+    /* Визуал Nitro и Slow-motion */
+    .nitro-mode #road {
+      background: #111;
+      box-shadow: 0 0 40px rgba(255,120,0,0.9);
+    }
+    .slow-motion #road {
+      filter: brightness(0.7);
+    }
+
+    /* Тряска экрана при аварии */
+    .hit-shake {
+      animation: hitShake 0.25s;
+    }
+    @keyframes hitShake {
+      0%   { transform: translateX(0); }
+      20%  { transform: translateX(-6px); }
+      40%  { transform: translateX(6px); }
+      60%  { transform: translateX(-4px); }
+      80%  { transform: translateX(4px); }
+      100% { transform: translateX(0); }
+    }
   </style>
 </head>
 <body>
@@ -168,9 +244,13 @@
   </div>
 
   <div id="hud">
-    <div>Обогнал: <span id="score">0</span></div>
-    <div>Скорость: <span id="speed">1</span>x</div>
+    <div>Обогнал: <span id="score" class="value">0</span></div>
+    <div>Скорость: <span id="speed" class="value">1</span>x</div>
+    <div>Рекорд: <span id="bestScore" class="value">0</span></div>
   </div>
+
+  <!-- Кнопка Nitro -->
+  <button id="nitroBtn" class="nitro-btn">Nitro</button>
 
   <!-- Загрузочный экран с анимацией надписи -->
   <div id="introScreen" class="overlay" style="display:flex;">
@@ -186,7 +266,8 @@
   <!-- Экран Game Over -->
   <div id="gameOver" class="overlay">
     <h2>Финиш!</h2>
-    <p>Ты обогнал машин: <span id="finalScore">0</span></p>
+    <p>Сегодняшний заезд: <span id="finalScore">0</span> машин</p>
+    <p>Твой рекорд: <span id="bestScoreEnd">0</span> машин</p>
     <p id="comment"></p>
 
     <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px;">
@@ -210,12 +291,14 @@
   const raceCar = document.getElementById('raceCar');
   const scoreEl = document.getElementById('score');
   const speedEl = document.getElementById('speed');
+  const bestScoreEl = document.getElementById('bestScore');
 
   const introScreen = document.getElementById('introScreen');
   const introBtn = document.getElementById('introBtn');
 
   const gameOver = document.getElementById('gameOver');
   const finalScoreEl = document.getElementById('finalScore');
+  const bestScoreEndEl = document.getElementById('bestScoreEnd');
   const commentEl = document.getElementById('comment');
   const coffeeMsg = document.getElementById('coffeeMsg');
   const coffeeNotReadyBtn = document.getElementById('coffeeNotReadyBtn');
@@ -224,10 +307,20 @@
 
   const leftBtn = document.getElementById('leftBtn');
   const rightBtn = document.getElementById('rightBtn');
+  const nitroBtn = document.getElementById('nitroBtn');
+  const gameEl = document.getElementById('game');
+
+  // вибро
+  function vibrate(pattern) {
+    if (navigator.vibrate) {
+      navigator.vibrate(pattern);
+    }
+  }
 
   // состояние игры
   let laneLines = [];
   let enemies = [];
+  let bonuses = [];
   let score = 0;
   let speed = 3;
   let maxSpeed = 9;
@@ -237,6 +330,25 @@
   const moveStep = 6;
   let running = false;
   let lastTime = 0;
+
+  // рекорд
+  let bestScore = parseInt(localStorage.getItem('coffeeRacerBest') || '0', 10);
+  if (isNaN(bestScore)) bestScore = 0;
+  bestScoreEl.textContent = bestScore;
+
+  // Nitro
+  let isNitroActive = false;
+  let nitroEndTime = 0;
+  let nitroCooldownEndTime = 0;
+  const NITRO_DURATION = 2500;   // мс
+  const NITRO_COOLDOWN = 6000;  // мс
+  const NITRO_MULTIPLIER = 2.2;
+
+  // Slow-motion от кофе
+  let isSlowMotionActive = false;
+  let slowMotionEndTime = 0;
+  const SLOW_MOTION_DURATION = 3500; // мс
+  const SLOW_MOTION_FACTOR = 0.5;
 
   function createLaneLines() {
     const roadRect = road.getBoundingClientRect();
@@ -262,14 +374,28 @@
     const enemy = document.createElement('div');
     enemy.className = 'enemy';
     const rect = road.getBoundingClientRect();
-
     const lanes = [rect.width * 0.2, rect.width * 0.5, rect.width * 0.8];
     const lane = lanes[Math.floor(Math.random() * lanes.length)];
     enemy.style.left = (lane - enemy.offsetWidth / 2) + 'px';
     enemy.style.top = '-90px';
-
     road.appendChild(enemy);
     enemies.push({ el: enemy, y: -90 });
+
+    // шанс заспавнить кофейный бонус
+    if (Math.random() < 0.15) {
+      spawnBonus();
+    }
+  }
+
+  function spawnBonus() {
+    const bonus = document.createElement('div');
+    bonus.className = 'bonus';
+    bonus.textContent = '☕';
+    const rect = road.getBoundingClientRect();
+    bonus.style.left = (Math.random() * (rect.width - 40) + 20) + 'px';
+    bonus.style.top = '-60px';
+    road.appendChild(bonus);
+    bonuses.push({ el: bonus, y: -60 });
   }
 
   function isColliding(a, b) {
@@ -306,11 +432,73 @@
     raceCar.style.left = x + 'px';
   }
 
+  function triggerSlowMotion(timestamp) {
+    isSlowMotionActive = true;
+    slowMotionEndTime = timestamp + SLOW_MOTION_DURATION;
+    gameEl.classList.add('slow-motion');
+  }
+
+  function updateNitroButtonState(now) {
+    if (isNitroActive) {
+      nitroBtn.classList.add('active');
+      nitroBtn.classList.remove('cooldown');
+      nitroBtn.disabled = true;
+    } else if (now < nitroCooldownEndTime) {
+      nitroBtn.classList.remove('active');
+      nitroBtn.classList.add('cooldown');
+      nitroBtn.disabled = true;
+    } else {
+      nitroBtn.classList.remove('active');
+      nitroBtn.classList.remove('cooldown');
+      nitroBtn.disabled = false;
+    }
+  }
+
+  nitroBtn.addEventListener('click', () => {
+    if (!running) return;
+    const now = performance.now();
+    if (isNitroActive) return;
+    if (now < nitroCooldownEndTime) return;
+
+    isNitroActive = true;
+    nitroEndTime = now + NITRO_DURATION;
+    gameEl.classList.add('nitro-mode');
+    updateNitroButtonState(now);
+  });
+
   function updateGame(timestamp, delta) {
+    // определяем множитель скорости
+    let speedFactor = 1;
+
+    // слоу-мо от кофе
+    if (isSlowMotionActive) {
+      if (timestamp >= slowMotionEndTime) {
+        isSlowMotionActive = false;
+        gameEl.classList.remove('slow-motion');
+      } else {
+        speedFactor = SLOW_MOTION_FACTOR;
+      }
+    }
+
+    // Nitro (перекрывает слоу-мо)
+    if (isNitroActive) {
+      if (timestamp >= nitroEndTime) {
+        isNitroActive = false;
+        nitroCooldownEndTime = timestamp + NITRO_COOLDOWN;
+        gameEl.classList.remove('nitro-mode');
+      } else {
+        speedFactor = NITRO_MULTIPLIER;
+      }
+    }
+    updateNitroButtonState(timestamp);
+
+    const effectiveSpeed = speed * speedFactor;
+    speedEl.textContent = (speed * speedFactor).toFixed(1);
+
     // разметка
     laneLines.forEach(line => {
       let top = parseFloat(line.style.top);
-      top += speed * 2;
+      top += effectiveSpeed * 2;
       const roadRect = road.getBoundingClientRect();
       if (top > roadRect.height) top = -40;
       line.style.top = top + 'px';
@@ -321,9 +509,10 @@
     const roadRect = road.getBoundingClientRect();
     const playerRect = raceCar.getBoundingClientRect();
 
+    // вражеские машины
     for (let i = enemies.length - 1; i >= 0; i--) {
       const obj = enemies[i];
-      obj.y += speed * 2.2;
+      obj.y += effectiveSpeed * 2.2;
       obj.el.style.top = obj.y + 'px';
 
       const enemyRect = obj.el.getBoundingClientRect();
@@ -335,17 +524,42 @@
       if (obj.y > roadRect.height + 100) {
         obj.el.remove();
         enemies.splice(i, 1);
-        score++;
+        score += 1;
         scoreEl.textContent = score;
 
+        // увеличение базовой скорости по мере набора очков
         if (score > 0 && score % 10 === 0 && speed < maxSpeed) {
-          speed += 0.01;
-          speedEl.textContent = speed.toFixed(1);
-          spawnInterval = Math.max(450, spawnInterval - 0.1);
+          speed += 0.2;
+          spawnInterval = Math.max(450, spawnInterval - 10);
         }
       }
     }
 
+    // бонусы
+    for (let i = bonuses.length - 1; i >= 0; i--) {
+      const obj = bonuses[i];
+      obj.y += effectiveSpeed * 1.4;
+      obj.el.style.top = obj.y + 'px';
+
+      const bonusRect = obj.el.getBoundingClientRect();
+      if (isColliding(playerRect, bonusRect)) {
+        // поймали кофе — бонус +5 и слоу-мо
+        score += 5;
+        scoreEl.textContent = score;
+        vibrate(60);
+        triggerSlowMotion(timestamp);
+        obj.el.remove();
+        bonuses.splice(i, 1);
+        continue;
+      }
+
+      if (obj.y > roadRect.height + 80) {
+        obj.el.remove();
+        bonuses.splice(i, 1);
+      }
+    }
+
+    // спавн новой машины (и иногда бонуса)
     if (timestamp - lastSpawn > spawnInterval) {
       spawnEnemy();
       lastSpawn = timestamp;
@@ -365,6 +579,8 @@
   function startGame() {
     enemies.forEach(e => e.el.remove());
     enemies = [];
+    bonuses.forEach(b => b.el.remove());
+    bonuses = [];
     score = 0;
     speed = 3;
     spawnInterval = 900;
@@ -377,6 +593,18 @@
     resetRaceCar();
 
     gameOver.style.display = 'none';
+    coffeeMsg.textContent = '';
+
+    // сброс Nitro и слоу-мо
+    isNitroActive = false;
+    nitroEndTime = 0;
+    nitroCooldownEndTime = 0;
+    isSlowMotionActive = false;
+    slowMotionEndTime = 0;
+    gameEl.classList.remove('nitro-mode');
+    gameEl.classList.remove('slow-motion');
+    updateNitroButtonState(performance.now());
+
     running = true;
     lastTime = performance.now();
     lastSpawn = lastTime;
@@ -385,7 +613,24 @@
 
   function endGame() {
     running = false;
+
+    // вибрация + тряска
+    vibrate([80, 40, 120]);
+    gameEl.classList.add('hit-shake');
+    setTimeout(() => {
+      gameEl.classList.remove('hit-shake');
+    }, 250);
+
     finalScoreEl.textContent = score;
+
+    // обновляем рекорд
+    if (score > bestScore) {
+      bestScore = score;
+      localStorage.setItem('coffeeRacerBest', String(bestScore));
+      bestScoreEl.textContent = bestScore;
+    }
+    bestScoreEndEl.textContent = bestScore;
+
     let text = '';
     if (score < 10) text = 'Похоже, ты только выехал из бокса.';
     else if (score < 25) text = 'Неплохо водишь! 👌';
@@ -419,8 +664,24 @@
     startGame();
   };
 
-  // анти-жест масштабирования
-  document.addEventListener('gesturestart', e => e.preventDefault());
+  /* ===== ПОЛНАЯ БЛОКИРОВКА СКРОЛЛИНГА И ЗУМА ===== */
+  (function preventScrolling() {
+    const block = (e) => e.preventDefault();
+
+    window.addEventListener('scroll', block, { passive: false });
+    window.addEventListener('wheel', block, { passive: false });
+    window.addEventListener('touchmove', block, { passive: false });
+
+    window.addEventListener('touchstart', (e) => {
+      if (e.touches.length > 1) e.preventDefault(); // pinch-zoom
+    }, { passive: false });
+
+    document.body.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+    }, { passive: false });
+
+    document.addEventListener('gesturestart', (e) => e.preventDefault(), { passive: false });
+  })();
 </script>
 </body>
 </html>
