@@ -64,9 +64,8 @@
       width: 40px;
       height: 70px;
       background: #00c853;
-      bottom: 160px;
-      left: 50%;
-      transform: translateX(-50%);
+      bottom: 150px;
+      left: 0;              /* ВАЖНО: без 50% и без translateX */
       border-radius: 8px;
       box-shadow: 0 0 10px rgba(0,0,0,0.6);
       display: none;
@@ -298,7 +297,7 @@
 </div>
 
 <script>
-  /* ===== Firebase init с твоим config ===== */
+  /* ===== Firebase init c твоим config ===== */
   const firebaseConfig = {
     apiKey: "AIzaSyBNfjarQbrPjloE--eAtl-RXeW11uPPXdc",
     authDomain: "coffe-drom.firebaseapp.com",
@@ -349,8 +348,8 @@
     }
   }
 
-  // симметричный отступ от бордюров в пикселях
-  const ROAD_MARGIN = 4;
+  // Отступ от краёв дороги
+  const ROAD_MARGIN = 0; // можно поставить 2-4px, если нужно чуть не доходить до края
 
   // состояние игры
   let laneLines = [];
@@ -365,9 +364,6 @@
   const moveStep = 6;
   let running = false;
   let lastTime = 0;
-
-  // плавное движение машины
-  let targetCarX = null;
 
   // жизни (1 старт, максимум 3, остальное подбирается бонусами ❤️)
   let lives = 1;
@@ -485,7 +481,6 @@
     const carWidth = raceCar.offsetWidth || 40;
     const x = Math.max(ROAD_MARGIN, Math.min((rect.width - carWidth) / 2, rect.width - carWidth - ROAD_MARGIN));
     raceCar.style.left = x + 'px';
-    targetCarX = x;
   }
 
   function spawnEnemy() {
@@ -493,7 +488,7 @@
     enemy.className = 'enemy';
     const rect = road.getBoundingClientRect();
 
-    // три полосы чуть внутри дороги
+    // три полосы
     const lanes = [
       rect.width * 0.22,
       rect.width * 0.5,
@@ -538,54 +533,31 @@
     );
   }
 
-  // Машина двигается за пальцем (по всему экрану), но в пределах дороги + margin
-  function clampCarX(x, rect, carWidth) {
-    const minX = ROAD_MARGIN;
-    const maxX = rect.width - carWidth - ROAD_MARGIN;
-    return Math.max(minX, Math.min(x, maxX));
-  }
-
-  function updateTargetFromPointer(e) {
+  // ===== Управление: машина сразу под пальцем, с клампом по краям дороги =====
+  function setCarXFromClientX(clientX) {
     if (!running) return;
     const rect = road.getBoundingClientRect();
     const carWidth = raceCar.offsetWidth || 40;
 
-    let x = e.clientX - rect.left - carWidth / 2;
-    x = clampCarX(x, rect, carWidth);
-    targetCarX = x;
-  }
+    let x = clientX - rect.left - carWidth / 2;
+    if (x < ROAD_MARGIN) x = ROAD_MARGIN;
+    if (x > rect.width - carWidth - ROAD_MARGIN) x = rect.width - carWidth - ROAD_MARGIN;
 
-  let activePointerId = null;
+    raceCar.style.left = x + 'px';
+  }
 
   gameEl.addEventListener('pointerdown', (e) => {
     e.preventDefault();
-    activePointerId = e.pointerId;
-    gameEl.setPointerCapture(e.pointerId);
-    updateTargetFromPointer(e);
+    setCarXFromClientX(e.clientX);
   }, { passive: false });
 
   gameEl.addEventListener('pointermove', (e) => {
     if (!running) return;
-    if (activePointerId !== null && e.pointerId !== activePointerId) return;
     e.preventDefault();
-    updateTargetFromPointer(e);
+    setCarXFromClientX(e.clientX);
   }, { passive: false });
 
-  gameEl.addEventListener('pointerup', (e) => {
-    if (activePointerId === e.pointerId) {
-      activePointerId = null;
-      try { gameEl.releasePointerCapture(e.pointerId); } catch {}
-    }
-  });
-
-  gameEl.addEventListener('pointercancel', (e) => {
-    if (activePointerId === e.pointerId) {
-      activePointerId = null;
-      try { gameEl.releasePointerCapture(e.pointerId); } catch {}
-    }
-  });
-
-  // Кнопки влево/вправо (двигают targetCarX)
+  // Кнопки влево/вправо (резкое смещение)
   leftBtn.addEventListener('pointerdown', () => { moveDirection = -1; });
   rightBtn.addEventListener('pointerdown', () => { moveDirection = 1; });
   ['pointerup','pointerleave','pointercancel'].forEach(ev => {
@@ -597,15 +569,14 @@
     if (!running) return;
     const rect = road.getBoundingClientRect();
     const carWidth = raceCar.offsetWidth || 40;
-    const current = (targetCarX == null ? raceCar.offsetLeft : targetCarX);
-    let x = current + moveDirection * moveStep;
-    x = clampCarX(x, rect, carWidth);
-    targetCarX = x;
+    let x = raceCar.offsetLeft + moveDirection * moveStep;
+    if (x < ROAD_MARGIN) x = ROAD_MARGIN;
+    if (x > rect.width - carWidth - ROAD_MARGIN) x = rect.width - carWidth - ROAD_MARGIN;
+    raceCar.style.left = x + 'px';
   }
 
-  // Nitro — двойной тап по машине + защита от зума
+  // Nitro — двойной тап по машине
   let lastTapTime = 0;
-
   raceCar.addEventListener('pointerdown', (e) => {
     if (!running) return;
     const now = performance.now();
@@ -691,19 +662,8 @@
       line.style.top = top + 'px';
     });
 
-    // кнопки (двигают цель)
+    // кнопки (двигают машину резко)
     moveRaceCarButtons();
-
-    // ПЛАВНО тянем машину к целевой позиции
-    if (targetCarX != null) {
-      const rect = road.getBoundingClientRect();
-      const carWidth = raceCar.offsetWidth || 40;
-      const current = raceCar.offsetLeft;
-      const lerpFactor = 0.10; // мягко
-      let next = current + (targetCarX - current) * lerpFactor;
-      next = clampCarX(next, rect, carWidth);
-      raceCar.style.left = next + 'px';
-    }
 
     const roadRect = road.getBoundingClientRect();
     const playerRect = raceCar.getBoundingClientRect();
@@ -724,25 +684,23 @@
         continue;
       }
 
-      // опасный / обычный обгон — считаем в момент, когда враг прошёл ниже машины
+      // опасный / обычный обгон
       if (!obj.counted && enemyRect.top > playerRect.bottom) {
         const enemyCenterX = (enemyRect.left + enemyRect.right) / 2;
         const dx = Math.abs(enemyCenterX - playerCenterX);
-        const closeThreshold = 18; // чем меньше, тем «опаснее» должен быть обгон
+        const closeThreshold = 18; // близко = 2 очка
         const gained = dx < closeThreshold ? 2 : 1;
 
         score += gained;
         scoreEl.textContent = score;
         obj.counted = true;
 
-        // рост сложности по общему счёту
         if (score > 0 && score % 10 === 0 && speed < maxSpeed) {
           speed += 0.2;
           spawnInterval = Math.max(450, spawnInterval - 10);
         }
       }
 
-      // удаляем ушедших далеко вниз
       if (obj.y > roadRect.height + 100) {
         obj.el.remove();
         enemies.splice(i, 1);
@@ -809,7 +767,7 @@
     scoreEl.textContent = score;
     speedEl.textContent = '0';
 
-    lives = 1; // старт одна жизнь
+    lives = 1;
     invulnerableUntil = 0;
     updateLivesHUD();
 
