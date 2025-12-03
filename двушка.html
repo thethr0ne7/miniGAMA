@@ -82,7 +82,7 @@
       box-shadow: 0 0 10px rgba(0,0,0,0.6);
     }
 
-    /* Кофейный бонус */
+    /* Бонусы (кофе / жизнь) */
     .bonus {
       position: absolute;
       width: 34px;
@@ -94,6 +94,9 @@
       justify-content: center;
       font-size: 20px;
       box-shadow: 0 0 10px rgba(255,152,0,0.8);
+    }
+    .bonus.heart {
+      background: radial-gradient(circle at top, #ffcdd2 0, #e53935 60%, #b71c1c 100%);
     }
 
     /* HUD */
@@ -192,7 +195,7 @@
       padding-left: 20px;
     }
 
-    /* Кнопки управления */
+    /* Кнопки управления (опционально) */
     #raceControls {
       position: absolute;
       bottom: 10px;
@@ -245,7 +248,7 @@
     <div>Игрок: <span id="playerNameLabel" class="value">Гость</span></div>
     <div>Обогнал: <span id="score" class="value">0</span></div>
     <div>Скорость: <span id="speed" class="value">0</span> км/ч</div>
-    <div>Жизни: <span id="lives" class="value">3</span></div>
+    <div>Жизни: <span id="lives" class="value">❤️</span></div>
     <div>Рекорд: <span id="bestScore" class="value">0</span></div>
   </div>
 
@@ -287,7 +290,7 @@
     </div>
   </div>
 
-  <!-- Кнопки управления (доп-опция) -->
+  <!-- Кнопки управления (опционально) -->
   <div id="raceControls">
     <button class="ctrl-btn" id="leftBtn">◀</button>
     <button class="ctrl-btn" id="rightBtn">▶</button>
@@ -346,9 +349,6 @@
     }
   }
 
-  // константа: "внутренние края" дороги (чуть отступаем от бордюров)
-  const ROAD_MARGIN = 8;
-
   // состояние игры
   let laneLines = [];
   let enemies = [];
@@ -366,13 +366,17 @@
   // плавное движение машины
   let targetCarX = null;
 
-  // жизни
-  let lives = 3;
+  // жизни (1 старт, максимум 3, остальное подбирается бонусами ❤️)
+  let lives = 1;
   const maxLives = 3;
   let invulnerableUntil = 0;
 
   // рекорд (общий, из Firebase)
   let bestScore = 0;
+
+  function updateLivesHUD() {
+    livesEl.textContent = lives > 0 ? '❤️'.repeat(lives) : '—';
+  }
 
   function loadGlobalBestScore() {
     bestScoreRef.once('value').then(snapshot => {
@@ -476,8 +480,10 @@
   function resetRaceCar() {
     const rect = road.getBoundingClientRect();
     const carWidth = raceCar.offsetWidth || 40;
-    const innerWidth = rect.width - ROAD_MARGIN * 2;
-    const x = ROAD_MARGIN + (innerWidth - carWidth) / 2;
+    const innerMinCenter = rect.width * 0.17;
+    const innerMaxCenter = rect.width * 0.83;
+    const center = (innerMinCenter + innerMaxCenter) / 2;
+    const x = center - carWidth / 2;
     raceCar.style.left = x + 'px';
     targetCarX = x;
   }
@@ -499,11 +505,22 @@
 
   function spawnBonus() {
     const bonus = document.createElement('div');
-    bonus.className = 'bonus';
-    bonus.textContent = '☕';
     const rect = road.getBoundingClientRect();
-    bonus.style.left = (Math.random() * (rect.width - 40) + 20) + 'px';
+
+    // 70% кофе, 30% жизнь
+    const isHeart = Math.random() < 0.3;
+    bonus.className = 'bonus' + (isHeart ? ' heart' : '');
+    bonus.dataset.type = isHeart ? 'heart' : 'coffee';
+    bonus.textContent = isHeart ? '❤️' : '☕';
+
+    // Спавним внутри "безопасной" зоны
+    const minCenter = rect.width * 0.17;
+    const maxCenter = rect.width * 0.83;
+    const center = minCenter + Math.random() * (maxCenter - minCenter);
+    const left = center - 17; // половина ширины бонуса ~34px
+    bonus.style.left = left + 'px';
     bonus.style.top = '-60px';
+
     road.appendChild(bonus);
     bonuses.push({ el: bonus, y: -60 });
   }
@@ -517,35 +534,57 @@
     );
   }
 
-  // Машина двигается за пальцем (по всему экрану), но в пределах дороги + margin
+  // Clamp центра машины внутри 17%–83% ширины дороги
+  function clampCenter(center, width) {
+    const minC = width * 0.17;
+    const maxC = width * 0.83;
+    return Math.max(minC, Math.min(center, maxC));
+  }
+
+  // Машина двигается за пальцем (по всему экрану), но в пределах "клэмпа"
   function updateTargetFromPointer(e) {
     if (!running) return;
     const rect = road.getBoundingClientRect();
     const carWidth = raceCar.offsetWidth || 40;
 
-    let rel = e.clientX - rect.left;
-    const minRel = ROAD_MARGIN;
-    const maxRel = rect.width - ROAD_MARGIN;
-    rel = Math.max(minRel, Math.min(rel, maxRel));
+    let center = e.clientX - rect.left;
+    center = clampCenter(center, rect.width);
 
-    let x = rel - carWidth / 2;
-    const minX = ROAD_MARGIN;
-    const maxX = rect.width - carWidth - ROAD_MARGIN;
-    x = Math.max(minX, Math.min(x, maxX));
+    const x = center - carWidth / 2;
     targetCarX = x;
   }
 
+  let activePointerId = null;
+
   gameEl.addEventListener('pointerdown', (e) => {
     e.preventDefault();
+    activePointerId = e.pointerId;
+    gameEl.setPointerCapture(e.pointerId);
     updateTargetFromPointer(e);
   }, { passive: false });
 
   gameEl.addEventListener('pointermove', (e) => {
+    if (!running) return;
+    if (activePointerId !== null && e.pointerId !== activePointerId) return;
     e.preventDefault();
     updateTargetFromPointer(e);
   }, { passive: false });
 
-  // Кнопки влево/вправо (двигаем targetCarX)
+  gameEl.addEventListener('pointerup', (e) => {
+    if (activePointerId === e.pointerId) {
+      activePointerId = null;
+      try { gameEl.releasePointerCapture(e.pointerId); } catch {}
+    }
+  });
+
+  gameEl.addEventListener('pointercancel', (e) => {
+    if (activePointerId === e.pointerId) {
+      activePointerId = null;
+      try { gameEl.releasePointerCapture(e.pointerId); } catch {}
+    }
+  });
+
+  // Кнопки влево/вправо (двигают targetCarX)
   leftBtn.addEventListener('pointerdown', () => { moveDirection = -1; });
   rightBtn.addEventListener('pointerdown', () => { moveDirection = 1; });
   ['pointerup','pointerleave','pointercancel'].forEach(ev => {
@@ -558,11 +597,10 @@
     const rect = road.getBoundingClientRect();
     const carWidth = raceCar.offsetWidth || 40;
     const current = (targetCarX == null ? raceCar.offsetLeft : targetCarX);
-    let x = current + moveDirection * moveStep;
-    const minX = ROAD_MARGIN;
-    const maxX = rect.width - carWidth - ROAD_MARGIN;
-    x = Math.max(minX, Math.min(x, maxX));
-    targetCarX = x;
+    let center = current + carWidth / 2;
+    center += moveDirection * moveStep;
+    center = clampCenter(center, rect.width);
+    targetCarX = center - carWidth / 2;
   }
 
   // Nitro — двойной тап по машине + защита от зума
@@ -609,7 +647,7 @@
     }
 
     lives--;
-    livesEl.textContent = lives;
+    updateLivesHUD();
     vibrate([120, 60, 120]);
     triggerSlowMotion(timestamp);
     invulnerableUntil = timestamp + 1500;
@@ -653,14 +691,22 @@
       line.style.top = top + 'px';
     });
 
-    // кнопки (двигают target)
+    // кнопки (двигают цель)
     moveRaceCarButtons();
 
     // ПЛАВНО тянем машину к целевой позиции
     if (targetCarX != null) {
+      const rect = road.getBoundingClientRect();
+      const carWidth = raceCar.offsetWidth || 40;
       const current = raceCar.offsetLeft;
-      const lerpFactor = 0.12; // чем меньше — тем плавнее
-      const next = current + (targetCarX - current) * lerpFactor;
+      const lerpFactor = 0.10; // ещё мягче
+      let next = current + (targetCarX - current) * lerpFactor;
+
+      // на всякий случай ещё раз жёстко клампим по центру
+      let center = next + carWidth / 2;
+      center = clampCenter(center, rect.width);
+      next = center - carWidth / 2;
+
       raceCar.style.left = next + 'px';
     }
 
@@ -693,7 +739,7 @@
       }
     }
 
-    // бонусы
+    // бонусы (кофе и жизни)
     for (let i = bonuses.length - 1; i >= 0; i--) {
       const obj = bonuses[i];
       obj.y += effectiveSpeed * 1.4;
@@ -701,10 +747,19 @@
 
       const bonusRect = obj.el.getBoundingClientRect();
       if (isColliding(playerRect, bonusRect)) {
-        score += 5;
-        scoreEl.textContent = score;
-        vibrate(60);
-        triggerSlowMotion(timestamp);
+        const type = obj.el.dataset.type || 'coffee';
+        if (type === 'coffee') {
+          score += 5;
+          scoreEl.textContent = score;
+          vibrate(60);
+          triggerSlowMotion(timestamp);
+        } else if (type === 'heart') {
+          if (lives < maxLives) {
+            lives++;
+            updateLivesHUD();
+            vibrate(80);
+          }
+        }
         obj.el.remove();
         bonuses.splice(i, 1);
         continue;
@@ -744,9 +799,9 @@
     scoreEl.textContent = score;
     speedEl.textContent = '0';
 
-    lives = maxLives;
-    livesEl.textContent = lives;
+    lives = 1; // старт одна жизнь
     invulnerableUntil = 0;
+    updateLivesHUD();
 
     createLaneLines();
     raceCar.style.display = 'block';
