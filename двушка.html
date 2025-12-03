@@ -29,7 +29,7 @@
       position: relative;
       overflow: hidden;
       background: radial-gradient(circle at top, #333 0, #111 60%);
-      transition: background 0.2s ease, transform 0.2s ease;
+      transition: background 0.2s ease, transform 0.2s ease, filter 0.15s ease;
     }
 
     /* Дорога */
@@ -64,7 +64,7 @@
       width: 40px;
       height: 70px;
       background: #00c853;
-      bottom: 160px;
+      bottom: 150px;
       left: 0; /* без translateX */
       border-radius: 8px;
       box-shadow: 0 0 10px rgba(0,0,0,0.6);
@@ -122,6 +122,24 @@
       background: radial-gradient(circle at top, #ffcdd2 0, #e53935 60%, #b71c1c 100%);
     }
 
+    /* Лужа молока */
+    .milk {
+      position: absolute;
+      width: 50px;
+      height: 30px;
+      border-radius: 50%;
+      background: radial-gradient(circle at center, rgba(255,255,255,0.95), rgba(255,255,255,0.4));
+      box-shadow: 0 0 12px rgba(255,255,255,0.9);
+      opacity: 0.9;
+    }
+    .milk.hazard-highlight {
+      animation: milkPulse 0.6s ease-in-out infinite alternate;
+    }
+    @keyframes milkPulse {
+      from { transform: scale(1); opacity: 0.9; box-shadow: 0 0 10px rgba(255,255,255,0.6); }
+      to   { transform: scale(1.08); opacity: 1;   box-shadow: 0 0 16px rgba(255,255,255,1); }
+    }
+
     /* HUD */
     #hud {
       position: absolute;
@@ -140,6 +158,32 @@
     }
     #hud span.value {
       font-weight: 700;
+    }
+
+    /* Предупреждение об опасной зоне */
+    #hazardWarning {
+      position: absolute;
+      bottom: 235px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(255, 193, 7, 0.95);
+      color: #000;
+      font-size: 12px;
+      font-weight: 700;
+      text-shadow: none;
+      opacity: 0;
+      pointer-events: none;
+      z-index: 7;
+    }
+    #hazardWarning.show {
+      opacity: 1;
+      animation: hazardBlink 0.4s ease-in-out infinite alternate;
+    }
+    @keyframes hazardBlink {
+      from { transform: translateX(-50%) translateY(0); }
+      to   { transform: translateX(-50%) translateY(-3px); }
     }
 
     /* Оверлеи */
@@ -279,6 +323,9 @@
     <div>Рекорд: <span id="bestScore" class="value">0</span></div>
   </div>
 
+  <!-- Предупреждение об опасной зоне -->
+  <div id="hazardWarning">Скользко впереди!</div>
+
   <!-- Загрузочный экран -->
   <div id="introScreen" class="overlay" style="display:flex;">
     <div>
@@ -369,6 +416,7 @@
   const rightBtn = document.getElementById('rightBtn');
   const gameEl = document.getElementById('game');
   const leaderboardList = document.getElementById('leaderboardList');
+  const hazardWarning = document.getElementById('hazardWarning');
 
   let playerName = 'Гость';
 
@@ -378,10 +426,8 @@
     }
   }
 
-  // отступ от внутр. краёв дороги (можешь поставить 2–4, если нужно чуть не доходить до края)
   const ROAD_MARGIN = 0;
 
-  // состояние игры
   let laneLines = [];
   let enemies = [];
   let bonuses = [];
@@ -395,12 +441,10 @@
   let running = false;
   let lastTime = 0;
 
-  // жизни
   let lives = 1;
   const maxLives = 3;
   let invulnerableUntil = 0;
 
-  // рекорд (общий, из Firebase)
   let bestScore = 0;
 
   // Nitro
@@ -416,6 +460,13 @@
   let slowMotionEndTime = 0;
   const SLOW_MOTION_DURATION = 1200;
   const SLOW_MOTION_FACTOR = 0.5;
+
+  // Skid (лужа)
+  let skidActive = false;
+  let skidDirection = 0;
+  let skidEndTime = 0;
+  const SKID_DURATION = 900;
+  const SKID_FORCE = 4;
 
   function updateLivesHUD() {
     livesEl.textContent = lives > 0 ? '❤️'.repeat(lives) : '—';
@@ -492,15 +543,15 @@
       });
   }
 
-  /* ===== Вспомогательная функция: внутренняя ширина дороги ===== */
+  /* ===== Внутренние размеры дороги ===== */
   function getRoadInnerMetrics() {
-    const fullWidth = road.offsetWidth;   // с бордюрами
-    const innerWidth = road.clientWidth;  // без бордюров
+    const fullWidth = road.offsetWidth;
+    const innerWidth = road.clientWidth;
     const border = (fullWidth - innerWidth) / 2;
     return { innerWidth, borderLeft: border };
   }
 
-  /* ===== Разметка дороги ===== */
+  /* ===== Разметка ===== */
   function createLaneLines() {
     const roadRect = road.getBoundingClientRect();
     const count = Math.ceil(roadRect.height / 80) + 2;
@@ -515,7 +566,7 @@
     }
   }
 
-  /* ===== Позиция машины по центру ===== */
+  /* ===== Машина по центру ===== */
   function resetRaceCar() {
     const { innerWidth } = getRoadInnerMetrics();
     const carWidth = raceCar.offsetWidth || 40;
@@ -548,6 +599,9 @@
     if (Math.random() < 0.15) {
       spawnBonus();
     }
+    if (Math.random() < 0.10) {
+      spawnMilk();
+    }
   }
 
   function spawnBonus() {
@@ -569,6 +623,21 @@
     bonuses.push({ el: bonus, y: -60 });
   }
 
+  function spawnMilk() {
+    const milk = document.createElement('div');
+    milk.className = 'milk';
+    milk.dataset.type = 'milk';
+
+    const { innerWidth } = getRoadInnerMetrics();
+    const minX = ROAD_MARGIN + 10;
+    const maxX = innerWidth - ROAD_MARGIN - 50;
+    milk.style.left = (minX + Math.random() * (maxX - minX)) + 'px';
+    milk.style.top = '-60px';
+
+    road.appendChild(milk);
+    bonuses.push({ el: milk, y: -60 });
+  }
+
   function isColliding(a, b) {
     return !(
       a.right < b.left ||
@@ -578,7 +647,7 @@
     );
   }
 
-  /* ===== Управление: машина сразу под пальцем ===== */
+  /* ===== Управление: тач сразу под пальцем ===== */
   function setCarXFromClientX(clientX) {
     if (!running) return;
 
@@ -586,8 +655,7 @@
     const carWidth = raceCar.offsetWidth || 40;
     const { innerWidth, borderLeft } = getRoadInnerMetrics();
 
-    // координата пальца относительно внутренней части дороги
-    let localX = clientX - rect.left - borderLeft;   // 0..innerWidth
+    let localX = clientX - rect.left - borderLeft;
     let x = localX - carWidth / 2;
 
     if (x < ROAD_MARGIN) x = ROAD_MARGIN;
@@ -630,7 +698,7 @@
     raceCar.style.left = x + 'px';
   }
 
-  /* ===== Nitro (двойной тап) + шкала ===== */
+  /* ===== Nitro + шкала ===== */
   let lastTapTime = 0;
 
   raceCar.addEventListener('pointerdown', (e) => {
@@ -682,6 +750,18 @@
     nitroBarFill.style.opacity = opacity;
   }
 
+  /* ===== Skid от молока ===== */
+  function activateSkid(timestamp) {
+    skidActive = true;
+    skidDirection = Math.random() < 0.5 ? -1 : 1;
+    skidEndTime = timestamp + SKID_DURATION;
+
+    gameEl.style.filter = "brightness(1.2)";
+    setTimeout(() => {
+      if (!isSlowMotionActive) gameEl.style.filter = "";
+    }, 150);
+  }
+
   /* ===== Slow motion ===== */
   function triggerSlowMotion(timestamp) {
     isSlowMotionActive = true;
@@ -716,6 +796,7 @@
       if (timestamp >= slowMotionEndTime) {
         isSlowMotionActive = false;
         gameEl.classList.remove('slow-motion');
+        gameEl.style.filter = "";
       } else {
         speedFactor = SLOW_MOTION_FACTOR;
       }
@@ -750,6 +831,31 @@
     const roadRect = road.getBoundingClientRect();
     const playerRect = raceCar.getBoundingClientRect();
     const playerCenterX = (playerRect.left + playerRect.right) / 2;
+
+    // SKID эффект
+    if (skidActive) {
+      if (timestamp >= skidEndTime) {
+        skidActive = false;
+        if (!isSlowMotionActive) {
+          gameEl.style.filter = "";
+        }
+      } else {
+        const carWidth = raceCar.offsetWidth || 40;
+        const { innerWidth } = getRoadInnerMetrics();
+        let x = raceCar.offsetLeft + skidDirection * SKID_FORCE;
+
+        if (x < ROAD_MARGIN) {
+          x = ROAD_MARGIN;
+          skidDirection *= -1;
+        }
+        if (x > innerWidth - carWidth - ROAD_MARGIN) {
+          x = innerWidth - carWidth - ROAD_MARGIN;
+          skidDirection *= -1;
+        }
+
+        raceCar.style.left = x + 'px';
+      }
+    }
 
     // враги
     for (let i = enemies.length - 1; i >= 0; i--) {
@@ -787,15 +893,31 @@
       }
     }
 
-    // бонусы
+    // бонусы (кофе, сердца, лужи)
+    let hazardActive = false;
+
     for (let i = bonuses.length - 1; i >= 0; i--) {
       const obj = bonuses[i];
       obj.y += effectiveSpeed * 1.4;
       obj.el.style.top = obj.y + 'px';
 
       const bonusRect = obj.el.getBoundingClientRect();
+      const type = obj.el.dataset.type || 'coffee';
+
+      // предупреждение об опасной зоне для луж
+      if (type === 'milk') {
+        const milkCenterX = (bonusRect.left + bonusRect.right) / 2;
+        const dx = Math.abs(milkCenterX - playerCenterX);
+        const verticalAhead = bonusRect.top > 0 && bonusRect.top < playerRect.top;
+        if (dx < 40 && verticalAhead) {
+          hazardActive = true;
+          obj.el.classList.add('hazard-highlight');
+        } else {
+          obj.el.classList.remove('hazard-highlight');
+        }
+      }
+
       if (isColliding(playerRect, bonusRect)) {
-        const type = obj.el.dataset.type || 'coffee';
         if (type === 'coffee') {
           score += 5;
           scoreEl.textContent = score;
@@ -807,7 +929,11 @@
             updateLivesHUD();
             vibrate(80);
           }
+        } else if (type === 'milk') {
+          vibrate(40);
+          activateSkid(timestamp);
         }
+
         obj.el.remove();
         bonuses.splice(i, 1);
         continue;
@@ -817,6 +943,13 @@
         obj.el.remove();
         bonuses.splice(i, 1);
       }
+    }
+
+    // показать / спрятать предупреждение
+    if (hazardActive) {
+      hazardWarning.classList.add('show');
+    } else {
+      hazardWarning.classList.remove('show');
     }
 
     if (timestamp - lastSpawn > spawnInterval) {
@@ -857,14 +990,17 @@
 
     gameOver.style.display = 'none';
     coffeeMsg.textContent = '';
+    hazardWarning.classList.remove('show');
 
     isNitroActive = false;
     nitroEndTime = 0;
     nitroCooldownEndTime = 0;
     isSlowMotionActive = false;
     slowMotionEndTime = 0;
+    skidActive = false;
     gameEl.classList.remove('nitro-mode');
     gameEl.classList.remove('slow-motion');
+    gameEl.style.filter = "";
     updateNitroBar(performance.now());
 
     loadGlobalBestScore();
