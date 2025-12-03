@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
-  <title>Кофе-дром: Обгон / Парковка</title>
+  <title>Кофе-дром: Обгон</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <style>
     * { box-sizing: border-box; }
@@ -22,7 +22,7 @@
       background: radial-gradient(circle at top, #333 0, #111 60%);
     }
 
-    /* Дорога / поле игры */
+    /* Дорога */
     #road {
       position: absolute;
       width: 70vw;
@@ -36,7 +36,7 @@
       overflow: hidden;
     }
 
-    /* Разметка для режима Обгон */
+    /* Разметка */
     .lane-line {
       position: absolute;
       width: 4px;
@@ -47,13 +47,13 @@
       opacity: 0.7;
     }
 
-    /* Машина игрока в режиме Обгон */
+    /* Машина игрока (поднята выше, чтобы её не закрывали пальцы) */
     #raceCar {
       position: absolute;
       width: 40px;
       height: 70px;
       background: #00c853;
-      bottom: 20px;
+      bottom: 110px; /* БЫЛО 20px — теперь машина намного выше */
       left: 50%;
       transform: translateX(-50%);
       border-radius: 8px;
@@ -61,19 +61,7 @@
       display: none;
     }
 
-    /* Машина игрока в режиме Парковка */
-    #parkingCar {
-      position: absolute;
-      width: 50px;
-      height: 90px;
-      background: #00b0ff;
-      border-radius: 10px;
-      box-shadow: 0 0 12px rgba(0,0,0,0.7);
-      transform-origin: 50% 50%;
-      display: none;
-    }
-
-    /* Вражеские машины в режиме Обгон */
+    /* Вражеские машины */
     .enemy {
       position: absolute;
       width: 40px;
@@ -81,30 +69,6 @@
       background: #e53935;
       border-radius: 8px;
       box-shadow: 0 0 10px rgba(0,0,0,0.6);
-    }
-
-    /* Зона парковки */
-    #parkingBox {
-      position: absolute;
-      width: 60%;
-      height: 30%;
-      border: 3px dashed #fff;
-      border-radius: 10px;
-      top: 10%;
-      left: 50%;
-      transform: translateX(-50%);
-      opacity: 0.9;
-      display: none;
-    }
-    #parkingBox::after {
-      content: "Бокс";
-      position: absolute;
-      top: 4px;
-      left: 50%;
-      transform: translateX(-50%);
-      font-size: 14px;
-      color: #fff;
-      opacity: 0.8;
     }
 
     /* HUD */
@@ -120,7 +84,7 @@
       text-shadow: 0 0 4px #000;
     }
 
-    /* Общие оверлеи */
+    /* Оверлеи */
     .overlay {
       position: absolute;
       inset: 0;
@@ -133,7 +97,7 @@
       padding: 20px;
     }
 
-    /* Загрузочный экран */
+    /* Загрузочный экран с анимацией текста */
     #introScreen {
       display: flex;
       flex-direction: column;
@@ -151,29 +115,9 @@
       animation: fadeUp 2.2s ease-out forwards;
     }
     @keyframes fadeUp {
-      0% { opacity: 0; transform: translateY(16px); }
-      60% { opacity: 1; transform: translateY(0); }
+      0%   { opacity: 0; transform: translateY(16px); }
+      60%  { opacity: 1; transform: translateY(0); }
       100% { opacity: 1; transform: translateY(0); }
-    }
-
-    /* Меню режимов */
-    #modeMenu h2 {
-      margin-bottom: 12px;
-    }
-    .mode-buttons {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      margin-top: 10px;
-    }
-    .mode-btn {
-      border: none;
-      padding: 10px 20px;
-      border-radius: 999px;
-      font-size: 16px;
-      background: #ffb300;
-      color: #000;
-      font-weight: 600;
     }
 
     button {
@@ -196,7 +140,7 @@
       gap: 8px;
     }
 
-    /* Кнопки управления Обгон */
+    /* Кнопки управления */
     #raceControls {
       position: absolute;
       bottom: 10px;
@@ -215,150 +159,73 @@
       color: #fff;
       font-size: 28px;
     }
-
-    /* Кнопки управления Парковка */
-    #parkingControls {
-      position: absolute;
-      bottom: 10px;
-      left: 50%;
-      transform: translateX(-50%);
-      display: none;
-      flex-direction: column;
-      gap: 6px;
-      z-index: 6;
-      align-items: center;
-    }
-    #parkingControls-row {
-      display: flex;
-      gap: 14px;
-    }
-    .p-btn {
-      width: 60px;
-      height: 60px;
-      border-radius: 16px;
-      background: rgba(255,255,255,0.12);
-      color: #fff;
-      font-size: 24px;
-      border: none;
-    }
-    .p-btn-small {
-      width: 90px;
-      height: 40px;
-      border-radius: 999px;
-      font-size: 16px;
-    }
   </style>
 </head>
 <body>
 <div id="game">
   <div id="road">
-    <div id="parkingBox"></div>
     <div id="raceCar"></div>
-    <div id="parkingCar"></div>
   </div>
 
   <div id="hud">
-    <div id="modeLabel">Режим: —</div>
-    <div id="info1"></div>
-    <div id="info2"></div>
+    <div>Обогнал: <span id="score">0</span></div>
+    <div>Скорость: <span id="speed">1</span>x</div>
   </div>
 
-  <!-- Загрузочный экран с анимацией текста -->
+  <!-- Загрузочный экран с анимацией надписи -->
   <div id="introScreen" class="overlay" style="display:flex;">
     <div>
       <h1>Кофе-дром ☕🏁</h1>
       <p class="intro-text">
         Объезжай машины, пока ждёшь свой кофе.
       </p>
-      <button id="introBtn">Продолжить</button>
-    </div>
-  </div>
-
-  <!-- Меню выбора режима -->
-  <div id="modeMenu" class="overlay">
-    <div>
-      <h2>Выбери режим</h2>
-      <p>Гонка или тренировка парковки задним ходом.</p>
-      <div class="mode-buttons">
-        <button class="mode-btn" id="modeRace">🏎 Обгон</button>
-        <button class="mode-btn" id="modeParking">🅿 Парковка задним ходом</button>
-      </div>
+      <button id="introBtn">Поехали</button>
     </div>
   </div>
 
   <!-- Экран Game Over -->
   <div id="gameOver" class="overlay">
     <h2>Финиш!</h2>
-    <p id="resultText"></p>
+    <p>Ты обогнал машин: <span id="finalScore">0</span></p>
     <p id="comment"></p>
 
     <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px;">
       <button id="coffeeNotReadyBtn" style="background:#ffb300;">Кофе ещё не готов</button>
       <button id="coffeeReadyBtn" style="background:#00e676;">Кофе готов</button>
-      <button id="backToMenuBtn" style="background:#ccc;">В меню режимов</button>
+      <button id="restartBtn" style="background:#ccc;">Новый заезд</button>
     </div>
 
     <p id="coffeeMsg" style="margin-top:10px;font-size:16px;font-weight:500;"></p>
   </div>
 
-  <!-- Кнопки управления режим Обгон -->
+  <!-- Кнопки управления -->
   <div id="raceControls">
     <button class="ctrl-btn" id="leftBtn">◀</button>
     <button class="ctrl-btn" id="rightBtn">▶</button>
   </div>
-
-  <!-- Кнопки управления режим Парковка -->
-  <div id="parkingControls">
-    <button class="p-btn-small" id="forwardBtn">Вперёд</button>
-    <div id="parkingControls-row">
-      <button class="p-btn" id="leftTurnBtn">⟲</button>
-      <button class="p-btn" id="backwardBtn">Назад</button>
-      <button class="p-btn" id="rightTurnBtn">⟳</button>
-    </div>
-  </div>
 </div>
 
 <script>
-  const game = document.getElementById('game');
   const road = document.getElementById('road');
   const raceCar = document.getElementById('raceCar');
-  const parkingCar = document.getElementById('parkingCar');
-  const parkingBox = document.getElementById('parkingBox');
-
-  const modeLabel = document.getElementById('modeLabel');
-  const info1 = document.getElementById('info1');
-  const info2 = document.getElementById('info2');
+  const scoreEl = document.getElementById('score');
+  const speedEl = document.getElementById('speed');
 
   const introScreen = document.getElementById('introScreen');
   const introBtn = document.getElementById('introBtn');
-  const modeMenu = document.getElementById('modeMenu');
-  const modeRaceBtn = document.getElementById('modeRace');
-  const modeParkingBtn = document.getElementById('modeParking');
 
   const gameOver = document.getElementById('gameOver');
-  const resultText = document.getElementById('resultText');
+  const finalScoreEl = document.getElementById('finalScore');
   const commentEl = document.getElementById('comment');
   const coffeeMsg = document.getElementById('coffeeMsg');
   const coffeeNotReadyBtn = document.getElementById('coffeeNotReadyBtn');
   const coffeeReadyBtn = document.getElementById('coffeeReadyBtn');
-  const backToMenuBtn = document.getElementById('backToMenuBtn');
+  const restartBtn = document.getElementById('restartBtn');
 
-  const raceControls = document.getElementById('raceControls');
   const leftBtn = document.getElementById('leftBtn');
   const rightBtn = document.getElementById('rightBtn');
 
-  const parkingControls = document.getElementById('parkingControls');
-  const forwardBtn = document.getElementById('forwardBtn');
-  const backwardBtn = document.getElementById('backwardBtn');
-  const leftTurnBtn = document.getElementById('leftTurnBtn');
-  const rightTurnBtn = document.getElementById('rightTurnBtn');
-
-  // Общие переменные
-  let currentMode = null; // 'race' или 'parking'
-  let running = false;
-  let lastTime = 0;
-
-  // ==== РЕЖИМ ОБГОН ====
+  // состояние игры
   let laneLines = [];
   let enemies = [];
   let score = 0;
@@ -368,6 +235,8 @@
   let spawnInterval = 900;
   let moveDirection = 0;
   const moveStep = 6;
+  let running = false;
+  let lastTime = 0;
 
   function createLaneLines() {
     const roadRect = road.getBoundingClientRect();
@@ -386,7 +255,6 @@
   function resetRaceCar() {
     const rect = road.getBoundingClientRect();
     const carWidth = raceCar.offsetWidth;
-    raceCar.style.bottom = '20px';
     raceCar.style.left = (rect.width / 2 - carWidth / 2) + 'px';
   }
 
@@ -413,33 +281,33 @@
     );
   }
 
-  // Управление пальцем по дороге в режиме Обгон
+  // Управление пальцем (по дороге)
   road.addEventListener('pointermove', e => {
-    if (!running || currentMode !== 'race') return;
+    if (!running) return;
     const rect = road.getBoundingClientRect();
     let x = e.clientX - rect.left - raceCar.offsetWidth / 2;
     x = Math.max(0, Math.min(x, rect.width - raceCar.offsetWidth));
     raceCar.style.left = x + 'px';
   });
 
-  // Кнопки влево / вправо
-  leftBtn.addEventListener('pointerdown', () => { if (currentMode === 'race') moveDirection = -1; });
-  rightBtn.addEventListener('pointerdown', () => { if (currentMode === 'race') moveDirection = 1; });
+  // Кнопки управления
+  leftBtn.addEventListener('pointerdown', () => { moveDirection = -1; });
+  rightBtn.addEventListener('pointerdown', () => { moveDirection = 1; });
   ['pointerup','pointerleave','pointercancel'].forEach(ev => {
-    leftBtn.addEventListener(ev, () => { if (currentMode === 'race') moveDirection = 0; });
-    rightBtn.addEventListener(ev, () => { if (currentMode === 'race') moveDirection = 0; });
+    leftBtn.addEventListener(ev, () => moveDirection = 0);
+    rightBtn.addEventListener(ev, () => moveDirection = 0);
   });
 
   function moveRaceCarButtons() {
-    if (!running || currentMode !== 'race') return;
+    if (!running) return;
     const rect = road.getBoundingClientRect();
     let x = raceCar.offsetLeft + moveDirection * moveStep;
     x = Math.max(0, Math.min(x, rect.width - raceCar.offsetWidth));
     raceCar.style.left = x + 'px';
   }
 
-  function updateRace(timestamp, delta) {
-    // Разметка
+  function updateGame(timestamp, delta) {
+    // разметка
     laneLines.forEach(line => {
       let top = parseFloat(line.style.top);
       top += speed * 2;
@@ -460,7 +328,7 @@
 
       const enemyRect = obj.el.getBoundingClientRect();
       if (isColliding(playerRect, enemyRect)) {
-        endGame('crash');
+        endGame();
         return;
       }
 
@@ -468,11 +336,11 @@
         obj.el.remove();
         enemies.splice(i, 1);
         score++;
-        info1.textContent = 'Обогнал: ' + score;
+        scoreEl.textContent = score;
 
         if (score > 0 && score % 10 === 0 && speed < maxSpeed) {
           speed += 0.01;
-          info2.textContent = 'Скорость: ' + speed.toFixed(1) + 'x';
+          speedEl.textContent = speed.toFixed(1);
           spawnInterval = Math.max(450, spawnInterval - 0.1);
         }
       }
@@ -484,210 +352,55 @@
     }
   }
 
-  function startRaceMode() {
-    currentMode = 'race';
-    running = false;
+  function gameLoop(timestamp) {
+    if (!running) return;
+    const delta = timestamp - lastTime;
+    lastTime = timestamp;
 
-    // UI
-    modeLabel.textContent = 'Режим: Обгон';
-    info1.textContent = 'Обогнал: 0';
-    info2.textContent = 'Скорость: 1x';
-    raceControls.style.display = 'flex';
-    parkingControls.style.display = 'none';
-    parkingBox.style.display = 'none';
-    parkingCar.style.display = 'none';
-    raceCar.style.display = 'block';
+    updateGame(timestamp, delta);
 
-    // Сброс состояния
-    laneLines.forEach(l => l.remove());
-    laneLines = [];
+    requestAnimationFrame(gameLoop);
+  }
+
+  function startGame() {
     enemies.forEach(e => e.el.remove());
     enemies = [];
     score = 0;
     speed = 3;
     spawnInterval = 900;
     moveDirection = 0;
+    scoreEl.textContent = score;
+    speedEl.textContent = '1';
+
     createLaneLines();
+    raceCar.style.display = 'block';
     resetRaceCar();
 
+    gameOver.style.display = 'none';
+    running = true;
     lastTime = performance.now();
     lastSpawn = lastTime;
-    gameOver.style.display = 'none';
-    modeMenu.style.display = 'none';
-
-    running = true;
     requestAnimationFrame(gameLoop);
   }
 
-  // ==== РЕЖИМ ПАРКОВКА ====
-  let carX = 0;
-  let carY = 0;
-  let carAngle = 0; // в радианах
-  let forwardPressed = false;
-  let backwardPressed = false;
-  let turnLeftPressed = false;
-  let turnRightPressed = false;
-
-  function resetParkingCar() {
-    const rect = road.getBoundingClientRect();
-    const carRect = { w: parkingCar.offsetWidth, h: parkingCar.offsetHeight };
-
-    carX = rect.width / 2;
-    carY = rect.height * 0.8;
-    carAngle = -Math.PI / 2; // "смотрит" вверх
-
-    updateParkingCarTransform();
-  }
-
-  function updateParkingCarTransform() {
-    // позицию задаём относительно road
-    parkingCar.style.left = (carX - parkingCar.offsetWidth / 2) + 'px';
-    parkingCar.style.top = (carY - parkingCar.offsetHeight / 2) + 'px';
-    parkingCar.style.transform = `translateZ(0) rotate(${carAngle}rad)`;
-  }
-
-  function startParkingMode() {
-    currentMode = 'parking';
+  function endGame() {
     running = false;
+    finalScoreEl.textContent = score;
+    let text = '';
+    if (score < 10) text = 'Похоже, ты только выехал из бокса.';
+    else if (score < 25) text = 'Неплохо водишь! 👌';
+    else text = 'Ты настоящий пилот автодрома! 😎';
 
-    modeLabel.textContent = 'Режим: Парковка задним ходом';
-    info1.textContent = 'Задача: загнать машину в бокс.';
-    info2.textContent = 'Используй Вперёд / Назад и повороты.';
-
-    raceControls.style.display = 'none';
-    parkingControls.style.display = 'flex';
-    parkingBox.style.display = 'block';
-    raceCar.style.display = 'none';
-    parkingCar.style.display = 'block';
-
-    laneLines.forEach(l => l.remove());
-    laneLines = [];
-    enemies.forEach(e => e.el.remove());
-    enemies = [];
-
-    forwardPressed = backwardPressed = false;
-    turnLeftPressed = turnRightPressed = false;
-
-    const rect = road.getBoundingClientRect();
-    parkingBox.style.display = 'block';
-
-    resetParkingCar();
-
-    lastTime = performance.now();
-    gameOver.style.display = 'none';
-    modeMenu.style.display = 'none';
-
-    running = true;
-    requestAnimationFrame(gameLoop);
-  }
-
-  // Кнопки управления парковкой
-  function addPressToggle(btn, flagName) {
-    btn.addEventListener('pointerdown', () => {
-      if (currentMode !== 'parking') return;
-      window[flagName] = true;
-    });
-    ['pointerup','pointerleave','pointercancel'].forEach(ev => {
-      btn.addEventListener(ev, () => {
-        if (currentMode !== 'parking') return;
-        window[flagName] = false;
-      });
-    });
-  }
-  addPressToggle(forwardBtn, 'forwardPressed');
-  addPressToggle(backwardBtn, 'backwardPressed');
-  addPressToggle(leftTurnBtn, 'turnLeftPressed');
-  addPressToggle(rightTurnBtn, 'turnRightPressed');
-
-  function updateParking(delta) {
-    const rect = road.getBoundingClientRect();
-    const speedBase = 0.12 * delta;  // расстояние за кадр
-    let v = 0;
-
-    if (forwardPressed) v += speedBase;
-    if (backwardPressed) v -= speedBase;
-
-    const turnSpeed = 0.004 * delta;
-    if (v !== 0) {
-      if (turnLeftPressed) carAngle -= turnSpeed * Math.sign(v);
-      if (turnRightPressed) carAngle += turnSpeed * Math.sign(v);
-    }
-
-    carX += Math.cos(carAngle) * v;
-    carY += Math.sin(carAngle) * v;
-
-    // ограничения по краям дороги
-    const margin = 10;
-    const halfW = parkingCar.offsetWidth / 2;
-    const halfH = parkingCar.offsetHeight / 2;
-    carX = Math.max(halfW + margin, Math.min(rect.width - halfW - margin, carX));
-    carY = Math.max(halfH + margin, Math.min(rect.height - halfH - margin, carY));
-
-    updateParkingCarTransform();
-
-    // Проверяем, в боксе ли машина (по центру машины)
-    const boxRect = parkingBox.getBoundingClientRect();
-    const carCenterX = parkingCar.getBoundingClientRect().left + parkingCar.offsetWidth / 2;
-    const carCenterY = parkingCar.getBoundingClientRect().top + parkingCar.offsetHeight / 2;
-
-    if (
-      carCenterX > boxRect.left + 8 &&
-      carCenterX < boxRect.right - 8 &&
-      carCenterY > boxRect.top + 8 &&
-      carCenterY < boxRect.bottom - 8 &&
-      Math.abs(carAngle + Math.PI/2) < 0.6 // примерно задом в бокс (ориентир вверх)
-    ) {
-      // Успешная парковка
-      endGame('parking-success');
-    }
-  }
-
-  // ==== Общий игровой цикл ====
-  function gameLoop(timestamp) {
-    if (!running) return;
-    const delta = timestamp - lastTime;
-    lastTime = timestamp;
-
-    if (currentMode === 'race') {
-      updateRace(timestamp, delta);
-    } else if (currentMode === 'parking') {
-      updateParking(delta);
-    }
-
-    requestAnimationFrame(gameLoop);
-  }
-
-  // ==== Завершение игры ====
-  function endGame(reason) {
-    running = false;
-    gameOver.style.display = 'flex';
+    commentEl.textContent = text;
     coffeeMsg.textContent = '';
-
-    if (currentMode === 'race') {
-      resultText.textContent = 'Ты обогнал машин: ' + score;
-      if (reason === 'crash') {
-        commentEl.textContent = 'Немного задел соперника, бывает!';
-      } else {
-        commentEl.textContent = '';
-      }
-    } else if (currentMode === 'parking') {
-      if (reason === 'parking-success') {
-        resultText.textContent = 'Парковка завершена! Машина в боксе.';
-        commentEl.textContent = 'Отличная техника заднего хода!';
-      } else {
-        resultText.textContent = 'Парковка не удалась.';
-        commentEl.textContent = 'Попробуй ещё раз — практика решает.';
-      }
-    }
+    gameOver.style.display = 'flex';
   }
 
-  // ==== Кнопки после проигрыша ====
+  // Кнопки после проигрыша
   coffeeNotReadyBtn.onclick = () => {
     coffeeMsg.textContent = 'Попробуй ещё раз, если кофе ещё не готов ☕';
     setTimeout(() => {
-      gameOver.style.display = 'none';
-      if (currentMode === 'race') startRaceMode();
-      else if (currentMode === 'parking') startParkingMode();
+      startGame();
     }, 1200);
   };
 
@@ -695,22 +408,15 @@
     coffeeMsg.textContent = 'Наслаждайтесь напитком ☕';
   };
 
-  backToMenuBtn.onclick = () => {
-    gameOver.style.display = 'none';
-    modeMenu.style.display = 'flex';
+  restartBtn.onclick = () => {
+    coffeeMsg.textContent = '';
+    startGame();
   };
 
-  // ==== Навигация: интро -> меню -> режим ====
+  // Интро -> старт игры
   introBtn.onclick = () => {
     introScreen.style.display = 'none';
-    modeMenu.style.display = 'flex';
-  };
-
-  modeRaceBtn.onclick = () => {
-    startRaceMode();
-  };
-  modeParkingBtn.onclick = () => {
-    startParkingMode();
+    startGame();
   };
 
   // анти-жест масштабирования
