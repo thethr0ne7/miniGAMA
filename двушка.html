@@ -349,6 +349,9 @@
     }
   }
 
+  // симметричный отступ от бордюров в пикселях
+  const ROAD_MARGIN = 4;
+
   // состояние игры
   let laneLines = [];
   let enemies = [];
@@ -457,7 +460,7 @@
   const NITRO_COOLDOWN = 6000;
   const NITRO_MULTIPLIER = 2.2;
 
-  // Slow-motion от удара
+  // Slow-motion от удара / кофе
   let isSlowMotionActive = false;
   let slowMotionEndTime = 0;
   const SLOW_MOTION_DURATION = 1200;
@@ -480,10 +483,7 @@
   function resetRaceCar() {
     const rect = road.getBoundingClientRect();
     const carWidth = raceCar.offsetWidth || 40;
-    const innerMinCenter = rect.width * 0.17;
-    const innerMaxCenter = rect.width * 0.83;
-    const center = (innerMinCenter + innerMaxCenter) / 2;
-    const x = center - carWidth / 2;
+    const x = Math.max(ROAD_MARGIN, Math.min((rect.width - carWidth) / 2, rect.width - carWidth - ROAD_MARGIN));
     raceCar.style.left = x + 'px';
     targetCarX = x;
   }
@@ -492,12 +492,18 @@
     const enemy = document.createElement('div');
     enemy.className = 'enemy';
     const rect = road.getBoundingClientRect();
-    const lanes = [rect.width * 0.2, rect.width * 0.5, rect.width * 0.8];
+
+    // три полосы чуть внутри дороги
+    const lanes = [
+      rect.width * 0.22,
+      rect.width * 0.5,
+      rect.width * 0.78
+    ];
     const lane = lanes[Math.floor(Math.random() * lanes.length)];
     enemy.style.left = (lane - enemy.offsetWidth / 2) + 'px';
     enemy.style.top = '-90px';
     road.appendChild(enemy);
-    enemies.push({ el: enemy, y: -90 });
+    enemies.push({ el: enemy, y: -90, counted: false });
     if (Math.random() < 0.15) {
       spawnBonus();
     }
@@ -513,11 +519,9 @@
     bonus.dataset.type = isHeart ? 'heart' : 'coffee';
     bonus.textContent = isHeart ? '❤️' : '☕';
 
-    // Спавним внутри "безопасной" зоны
-    const minCenter = rect.width * 0.17;
-    const maxCenter = rect.width * 0.83;
-    const center = minCenter + Math.random() * (maxCenter - minCenter);
-    const left = center - 17; // половина ширины бонуса ~34px
+    const minX = ROAD_MARGIN + 10;
+    const maxX = rect.width - ROAD_MARGIN - 10;
+    const left = minX + Math.random() * (maxX - minX);
     bonus.style.left = left + 'px';
     bonus.style.top = '-60px';
 
@@ -534,23 +538,20 @@
     );
   }
 
-  // Clamp центра машины внутри 17%–83% ширины дороги
-  function clampCenter(center, width) {
-    const minC = width * 0.17;
-    const maxC = width * 0.83;
-    return Math.max(minC, Math.min(center, maxC));
+  // Машина двигается за пальцем (по всему экрану), но в пределах дороги + margin
+  function clampCarX(x, rect, carWidth) {
+    const minX = ROAD_MARGIN;
+    const maxX = rect.width - carWidth - ROAD_MARGIN;
+    return Math.max(minX, Math.min(x, maxX));
   }
 
-  // Машина двигается за пальцем (по всему экрану), но в пределах "клэмпа"
   function updateTargetFromPointer(e) {
     if (!running) return;
     const rect = road.getBoundingClientRect();
     const carWidth = raceCar.offsetWidth || 40;
 
-    let center = e.clientX - rect.left;
-    center = clampCenter(center, rect.width);
-
-    const x = center - carWidth / 2;
+    let x = e.clientX - rect.left - carWidth / 2;
+    x = clampCarX(x, rect, carWidth);
     targetCarX = x;
   }
 
@@ -597,10 +598,9 @@
     const rect = road.getBoundingClientRect();
     const carWidth = raceCar.offsetWidth || 40;
     const current = (targetCarX == null ? raceCar.offsetLeft : targetCarX);
-    let center = current + carWidth / 2;
-    center += moveDirection * moveStep;
-    center = clampCenter(center, rect.width);
-    targetCarX = center - carWidth / 2;
+    let x = current + moveDirection * moveStep;
+    x = clampCarX(x, rect, carWidth);
+    targetCarX = x;
   }
 
   // Nitro — двойной тап по машине + защита от зума
@@ -699,19 +699,15 @@
       const rect = road.getBoundingClientRect();
       const carWidth = raceCar.offsetWidth || 40;
       const current = raceCar.offsetLeft;
-      const lerpFactor = 0.10; // ещё мягче
+      const lerpFactor = 0.10; // мягко
       let next = current + (targetCarX - current) * lerpFactor;
-
-      // на всякий случай ещё раз жёстко клампим по центру
-      let center = next + carWidth / 2;
-      center = clampCenter(center, rect.width);
-      next = center - carWidth / 2;
-
+      next = clampCarX(next, rect, carWidth);
       raceCar.style.left = next + 'px';
     }
 
     const roadRect = road.getBoundingClientRect();
     const playerRect = raceCar.getBoundingClientRect();
+    const playerCenterX = (playerRect.left + playerRect.right) / 2;
 
     // враги
     for (let i = enemies.length - 1; i >= 0; i--) {
@@ -720,22 +716,36 @@
       obj.el.style.top = obj.y + 'px';
 
       const enemyRect = obj.el.getBoundingClientRect();
+
+      // столкновение
       if (isColliding(playerRect, enemyRect)) {
         handleCollision(timestamp, i);
         if (!running || lives <= 0) return;
         continue;
       }
 
-      if (obj.y > roadRect.height + 100) {
-        obj.el.remove();
-        enemies.splice(i, 1);
-        score += 1;
-        scoreEl.textContent = score;
+      // опасный / обычный обгон — считаем в момент, когда враг прошёл ниже машины
+      if (!obj.counted && enemyRect.top > playerRect.bottom) {
+        const enemyCenterX = (enemyRect.left + enemyRect.right) / 2;
+        const dx = Math.abs(enemyCenterX - playerCenterX);
+        const closeThreshold = 18; // чем меньше, тем «опаснее» должен быть обгон
+        const gained = dx < closeThreshold ? 2 : 1;
 
+        score += gained;
+        scoreEl.textContent = score;
+        obj.counted = true;
+
+        // рост сложности по общему счёту
         if (score > 0 && score % 10 === 0 && speed < maxSpeed) {
           speed += 0.2;
           spawnInterval = Math.max(450, spawnInterval - 10);
         }
+      }
+
+      // удаляем ушедших далеко вниз
+      if (obj.y > roadRect.height + 100) {
+        obj.el.remove();
+        enemies.splice(i, 1);
       }
     }
 
