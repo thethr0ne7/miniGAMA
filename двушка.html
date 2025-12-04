@@ -36,7 +36,7 @@
     #road {
       position: absolute;
       width: 70vw;
-      max-width: 420px; /* оставить как есть */
+      max-width: 420px; /* оставляем как ты и хотел */
       height: 100%;
       background: #222;
       left: 50%;
@@ -69,7 +69,7 @@
       border-radius: 8px;
       box-shadow: 0 0 10px rgba(0,0,0,0.6);
       display: none;
-      overflow: hidden; /* чтобы нитро-бар не вылезал */
+      overflow: hidden;
       transition: box-shadow 0.15s ease;
     }
 
@@ -96,7 +96,7 @@
       transition: height 0.08s linear, opacity 0.08s linear;
     }
 
-    /* Нитро заполнено/готово */
+    /* Нитро готово */
     #nitroBarFill.ready {
       animation: nitroPulse 0.8s ease-in-out infinite;
     }
@@ -105,14 +105,14 @@
       100% { box-shadow: 0 0 14px rgba(255,230,0,1); }
     }
 
-    /* Нитро-шлейф на машине */
+    /* Нитро-шлейф */
     #raceCar.nitro-trail {
       box-shadow:
         0 0 10px rgba(0,0,0,0.6),
         0 0 18px rgba(255,200,0,0.9);
     }
 
-    /* Вражеские машины (базовый стиль) */
+    /* Враги */
     .enemy {
       position: absolute;
       width: 40px;
@@ -122,7 +122,7 @@
       box-shadow: 0 0 10px rgba(0,0,0,0.6);
     }
 
-    /* Бонусы (кофе / жизнь) */
+    /* Бонусы */
     .bonus {
       position: absolute;
       width: 34px;
@@ -269,6 +269,26 @@
       gap: 8px;
     }
 
+    /* Экран выбора режима */
+    #modeScreen h2 {
+      margin-bottom: 8px;
+    }
+    #modeScreen p {
+      margin-top: 0;
+      margin-bottom: 12px;
+      font-size: 14px;
+      opacity: 0.9;
+    }
+    #modeButtons {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .mode-btn {
+      width: 220px;
+      margin: 0 auto;
+    }
+
     /* Лидерборд */
     #leaderboard {
       margin-top: 10px;
@@ -353,7 +373,7 @@
   <!-- Предупреждение об опасной зоне -->
   <div id="hazardWarning">Скользко впереди!</div>
 
-  <!-- Загрузочный экран -->
+  <!-- Экран ввода имени -->
   <div id="introScreen" class="overlay" style="display:flex;">
     <div>
       <h1>Кофе-дром ☕🏁</h1>
@@ -367,6 +387,19 @@
              style="margin-top:12px;padding:8px 12px;border-radius:999px;border:none;width:220px;text-align:center;" />
 
       <button id="introBtn">Поехали</button>
+    </div>
+  </div>
+
+  <!-- Экран выбора режима -->
+  <div id="modeScreen" class="overlay">
+    <div>
+      <h2>Выбери режим</h2>
+      <p>Можно просто кататься, играть с миссиями или сосредоточиться только на рекорде.</p>
+      <div id="modeButtons">
+        <button id="modeNormalBtn" class="mode-btn" style="background:#ffb300;">Обычный</button>
+        <button id="modeMissionsBtn" class="mode-btn" style="background:#00e676;">С миссиями</button>
+        <button id="modeRecordBtn" class="mode-btn" style="background:#ffcdd2;">Только рекорд</button>
+      </div>
     </div>
   </div>
 
@@ -422,6 +455,12 @@
     GAME_OVER: 'gameOver'
   };
 
+  const GAME_MODES = {
+    NORMAL: 'normal',
+    MISSIONS: 'missions',
+    RECORD: 'record'
+  };
+
   const ENTITY_TYPES = {
     ENEMY: 'enemy',
     BONUS_COFFEE: 'bonus_coffee',
@@ -473,6 +512,7 @@
   };
 
   let gameState = GAME_STATES.INTRO;
+  let currentMode = GAME_MODES.NORMAL;
 
   /* ===== DOM ===== */
   const road = document.getElementById('road');
@@ -489,6 +529,11 @@
   const introScreen = document.getElementById('introScreen');
   const introBtn = document.getElementById('introBtn');
   const playerNameInput = document.getElementById('playerNameInput');
+
+  const modeScreen = document.getElementById('modeScreen');
+  const modeNormalBtn = document.getElementById('modeNormalBtn');
+  const modeMissionsBtn = document.getElementById('modeMissionsBtn');
+  const modeRecordBtn = document.getElementById('modeRecordBtn');
 
   const gameOver = document.getElementById('gameOver');
   const finalScoreEl = document.getElementById('finalScore');
@@ -532,7 +577,7 @@
   const maxLives = 3;
   let invulnerableUntil = 0;
 
-  let bestScore = 0; // глобальный рекорд из Firebase
+  let bestScore = 0;
 
   // Nitro
   let isNitroActive = false;
@@ -543,7 +588,7 @@
   let isSlowMotionActive = false;
   let slowMotionEndTime = 0;
 
-  // Skid (лужа)
+  // Skid
   let skidActive = false;
   let skidDirection = 0;
   let skidEndTime = 0;
@@ -557,8 +602,12 @@
   }
 
   function updateMissionHUD() {
-    if (!currentMission) {
+    if (currentMode !== GAME_MODES.MISSIONS) {
       missionLabel.textContent = '—';
+      return;
+    }
+    if (!currentMission) {
+      missionLabel.textContent = 'Миссия загружается...';
       return;
     }
     switch (currentMission.type) {
@@ -577,6 +626,12 @@
   }
 
   function startRandomMission() {
+    if (currentMode !== GAME_MODES.MISSIONS) {
+      currentMission = null;
+      updateMissionHUD();
+      return;
+    }
+
     const r = Math.random();
     if (r < 0.33) {
       currentMission = {
@@ -604,16 +659,14 @@
   }
 
   function completeMission() {
-    if (!currentMission || currentMission.completed) return;
+    if (!currentMission || currentMission.completed || currentMode !== GAME_MODES.MISSIONS) return;
     currentMission.completed = true;
 
-    // Награда за миссию
     score += 15;
     scoreEl.textContent = score;
     vibrate([80, 40, 80]);
     showFloatingText('+15 за миссию', raceCar.offsetLeft + 10, raceCar.offsetTop - 10);
 
-    // Запускаем новую миссию через паузу
     setTimeout(() => {
       startRandomMission();
     }, 1500);
@@ -625,19 +678,21 @@
     switch (newState) {
       case GAME_STATES.INTRO:
         introScreen.style.display = 'flex';
+        modeScreen.style.display = 'none';
         gameOver.style.display = 'none';
         running = false;
         break;
       case GAME_STATES.RUNNING:
         introScreen.style.display = 'none';
+        modeScreen.style.display = 'none';
         gameOver.style.display = 'none';
         running = true;
         lastTime = performance.now();
         requestAnimationFrame(gameLoop);
         break;
       case GAME_STATES.GAME_OVER:
-        running = false;
         gameOver.style.display = 'flex';
+        running = false;
         break;
     }
   }
@@ -676,7 +731,7 @@
   }
 
   function submitScore(name, scoreValue) {
-    const safeScore = Math.min(scoreValue, 10000); // мягкий лимит
+    const safeScore = Math.min(scoreValue, 10000);
     return scoresRef.push({
       name: name || 'Гость',
       score: safeScore,
@@ -794,9 +849,8 @@
     ];
     const lane = lanes[Math.floor(Math.random() * lanes.length)];
 
-    // Выбор варианта врага
-    const r = Math.random();
     let variant = ENEMY_VARIANTS.NORMAL;
+    const r = Math.random();
     if (r < 0.15) {
       variant = ENEMY_VARIANTS.SLOW_TRUCK;
     } else if (r < 0.30) {
@@ -810,7 +864,6 @@
       variant
     });
 
-    // визуальные отличия
     if (variant === ENEMY_VARIANTS.SLOW_TRUCK) {
       enemy.el.style.height = '90px';
       enemy.el.style.background = '#6d4c41';
@@ -821,11 +874,13 @@
 
     entities.push(enemy);
 
-    if (Math.random() < GAME_CONFIG.bonuses.coffeeChance) {
-      spawnBonus();
-    }
-    if (Math.random() < GAME_CONFIG.bonuses.milkChance) {
-      spawnMilk();
+    if (currentMode !== GAME_MODES.RECORD) {
+      if (Math.random() < GAME_CONFIG.bonuses.coffeeChance) {
+        spawnBonus();
+      }
+      if (Math.random() < GAME_CONFIG.bonuses.milkChance) {
+        spawnMilk();
+      }
     }
   }
 
@@ -877,7 +932,7 @@
     );
   }
 
-  /* ===== Управление: тач сразу под пальцем ===== */
+  /* ===== Управление: тач ===== */
   function setCarXFromClientX(clientX) {
     if (!running) return;
 
@@ -928,7 +983,7 @@
     raceCar.style.left = x + 'px';
   }
 
-  /* ===== Nitro + шкала ===== */
+  /* ===== Nitro ===== */
   let lastTapTime = 0;
 
   function setNitroReadyVisual(isReady) {
@@ -1047,7 +1102,7 @@
     setTimeout(() => el.remove(), 650);
   }
 
-  /* ===== Основной апдейт ===== */
+  /* ===== Обновление сущностей ===== */
   function updateEntities(timestamp, effectiveSpeed, playerRect, playerCenterX) {
     const roadRect = road.getBoundingClientRect();
     let hazardActive = false;
@@ -1055,14 +1110,12 @@
     for (let i = entities.length - 1; i >= 0; i--) {
       const ent = entities[i];
 
-      // Скорость в зависимости от типа/варианта
       if (ent.type === ENTITY_TYPES.ENEMY) {
         let mul = 2.2;
         if (ent.variant === ENEMY_VARIANTS.SLOW_TRUCK) {
           mul = 1.5;
         } else if (ent.variant === ENEMY_VARIANTS.FAST_BIKE) {
           mul = 3.0;
-          // шанс смены полосы
           if (Math.random() < 0.008) {
             const { innerWidth } = getRoadInnerMetrics();
             const lanes = [
@@ -1085,7 +1138,6 @@
 
       switch (ent.type) {
         case ENTITY_TYPES.ENEMY: {
-          // коллизия
           if (isColliding(playerRect, rect)) {
             handleCollision(timestamp);
             removeEntity(i);
@@ -1093,7 +1145,6 @@
             continue;
           }
 
-          // засчитываем обгон
           if (!ent.counted && rect.top > playerRect.bottom) {
             const enemyCenterX = (rect.left + rect.right) / 2;
             const dx = Math.abs(enemyCenterX - playerCenterX);
@@ -1103,11 +1154,11 @@
             score += gained;
             scoreEl.textContent = score;
 
-            // анимация за смелый обгон
             if (dx < closeThreshold) {
               showFloatingText('+2', playerCenterX - roadRect.left - 6, playerRect.top - roadRect.top - 10);
-              // миссия "агрессивная"
-              if (currentMission && currentMission.type === MISSION_TYPES.AGGRESSIVE && !currentMission.completed) {
+              if (currentMode === GAME_MODES.MISSIONS &&
+                  currentMission && currentMission.type === MISSION_TYPES.AGGRESSIVE &&
+                  !currentMission.completed) {
                 currentMission.progress++;
                 updateMissionHUD();
                 if (currentMission.progress >= currentMission.target) {
@@ -1116,13 +1167,11 @@
               }
             }
 
-            // ускоряем игру
             if (score > 0 && score % GAME_CONFIG.scoreForSpeedUp === 0 && speed < maxSpeed) {
               speed += GAME_CONFIG.speedStep;
               spawnInterval = Math.max(GAME_CONFIG.spawnIntervalMin, spawnInterval - 10);
             }
 
-            // подсветка, что побит глобальный рекорд
             if (score > bestScore) {
               bestScoreEl.classList.add('beat-record');
             }
@@ -1139,8 +1188,9 @@
             vibrate(60);
             triggerSlowMotion(timestamp);
 
-            // миссия "собрать кофе"
-            if (currentMission && currentMission.type === MISSION_TYPES.COLLECT_COFFEE && !currentMission.completed) {
+            if (currentMode === GAME_MODES.MISSIONS &&
+                currentMission && currentMission.type === MISSION_TYPES.COLLECT_COFFEE &&
+                !currentMission.completed) {
               currentMission.progress++;
               updateMissionHUD();
               if (currentMission.progress >= currentMission.target) {
@@ -1188,7 +1238,6 @@
         }
       }
 
-      // Удаляем вышедшие за экран
       if (ent.y > roadRect.height + 100) {
         removeEntity(i);
       }
@@ -1198,10 +1247,10 @@
     return true;
   }
 
+  /* ===== Основной апдейт ===== */
   function updateGame(timestamp) {
     let speedFactor = 1;
 
-    // Slow-motion
     if (isSlowMotionActive) {
       if (timestamp >= slowMotionEndTime) {
         isSlowMotionActive = false;
@@ -1212,7 +1261,6 @@
       }
     }
 
-    // Nitro
     if (isNitroActive) {
       if (timestamp >= nitroEndTime) {
         isNitroActive = false;
@@ -1230,7 +1278,6 @@
     const kmh = Math.round(effectiveSpeed * 20);
     speedEl.textContent = kmh;
 
-    // Разметка
     laneLines.forEach(line => {
       let top = parseFloat(line.style.top);
       top += effectiveSpeed * 2;
@@ -1245,7 +1292,6 @@
     const playerRect = raceCar.getBoundingClientRect();
     const playerCenterX = (playerRect.left + playerRect.right) / 2;
 
-    // SKID эффект
     if (skidActive) {
       if (timestamp >= skidEndTime) {
         skidActive = false;
@@ -1270,20 +1316,19 @@
       }
     }
 
-    // Миссия "выжить"
-    if (currentMission && currentMission.type === MISSION_TYPES.SURVIVE && !currentMission.completed) {
+    if (currentMode === GAME_MODES.MISSIONS &&
+        currentMission && currentMission.type === MISSION_TYPES.SURVIVE &&
+        !currentMission.completed) {
       const now = performance.now();
       if (now - currentMission.startedAt >= currentMission.durationMs) {
         completeMission();
       }
     }
 
-    // Обновляем сущности
     if (!updateEntities(timestamp, effectiveSpeed, playerRect, playerCenterX)) {
       return;
     }
 
-    // Спавн
     if (timestamp - lastSpawn > spawnInterval) {
       spawnEnemy();
       lastSpawn = timestamp;
@@ -1299,7 +1344,6 @@
   }
 
   function startGame() {
-    // очистка сущностей
     entities.forEach(e => e.el.remove());
     entities = [];
 
@@ -1323,7 +1367,6 @@
     coffeeMsg.textContent = '';
     hazardWarning.classList.remove('show');
 
-    // эффекты
     isNitroActive = false;
     nitroEndTime = 0;
     nitroCooldownEndTime = 0;
@@ -1336,8 +1379,12 @@
     raceCar.classList.remove('nitro-trail');
     updateNitroBar(performance.now());
 
-    // миссия
-    startRandomMission();
+    if (currentMode === GAME_MODES.MISSIONS) {
+      startRandomMission();
+    } else {
+      currentMission = null;
+      updateMissionHUD();
+    }
 
     loadGlobalBestScore();
 
@@ -1373,7 +1420,7 @@
     setGameState(GAME_STATES.GAME_OVER);
   }
 
-  /* ===== Кнопки экрана Game Over ===== */
+  /* ===== Кнопки Game Over ===== */
   coffeeNotReadyBtn.onclick = () => {
     coffeeMsg.textContent = 'Попробуй ещё раз, если кофе ещё не готов ☕';
     setTimeout(() => {
@@ -1392,14 +1439,25 @@
     setGameState(GAME_STATES.RUNNING);
   };
 
-  /* ===== Старт с интро ===== */
+  /* ===== Экран имени и выбор режима ===== */
   introBtn.onclick = () => {
     const name = (playerNameInput.value || '').trim();
     playerName = name || 'Гость';
     playerNameLabel.textContent = playerName;
+    introScreen.style.display = 'none';
+    modeScreen.style.display = 'flex';
+  };
+
+  function chooseMode(mode) {
+    currentMode = mode;
+    modeScreen.style.display = 'none';
     startGame();
     setGameState(GAME_STATES.RUNNING);
-  };
+  }
+
+  modeNormalBtn.onclick = () => chooseMode(GAME_MODES.NORMAL);
+  modeMissionsBtn.onclick = () => chooseMode(GAME_MODES.MISSIONS);
+  modeRecordBtn.onclick = () => chooseMode(GAME_MODES.RECORD);
 
   /* ===== Блокировка скролла и зума ===== */
   (function preventScrolling() {
