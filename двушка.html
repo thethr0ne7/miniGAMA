@@ -36,7 +36,7 @@
     #road {
       position: absolute;
       width: 70vw;
-      max-width: 420px;
+      max-width: 420px; /* оставить как есть */
       height: 100%;
       background: #222;
       left: 50%;
@@ -65,11 +65,12 @@
       height: 70px;
       background: #00c853;
       bottom: 150px;
-      left: 0; /* без translateX */
+      left: 0;
       border-radius: 8px;
       box-shadow: 0 0 10px rgba(0,0,0,0.6);
       display: none;
       overflow: hidden; /* чтобы нитро-бар не вылезал */
+      transition: box-shadow 0.15s ease;
     }
 
     /* Нитро шкала на машине (справа, вертикальная) */
@@ -95,7 +96,23 @@
       transition: height 0.08s linear, opacity 0.08s linear;
     }
 
-    /* Вражеские машины */
+    /* Нитро заполнено/готово */
+    #nitroBarFill.ready {
+      animation: nitroPulse 0.8s ease-in-out infinite;
+    }
+    @keyframes nitroPulse {
+      0% { box-shadow: 0 0 4px rgba(255,230,0,0.5); }
+      100% { box-shadow: 0 0 14px rgba(255,230,0,1); }
+    }
+
+    /* Нитро-шлейф на машине */
+    #raceCar.nitro-trail {
+      box-shadow:
+        0 0 10px rgba(0,0,0,0.6),
+        0 0 18px rgba(255,200,0,0.9);
+    }
+
+    /* Вражеские машины (базовый стиль) */
     .enemy {
       position: absolute;
       width: 40px;
@@ -158,6 +175,15 @@
     }
     #hud span.value {
       font-weight: 700;
+    }
+
+    /* Подсветка, когда побит рекорд */
+    #bestScore.beat-record {
+      animation: recordPulse 0.6s ease-in-out infinite alternate;
+    }
+    @keyframes recordPulse {
+      from { transform: scale(1); }
+      to   { transform: scale(1.15); }
     }
 
     /* Предупреждение об опасной зоне */
@@ -321,6 +347,7 @@
     <div>Скорость: <span id="speed" class="value">0</span> км/ч</div>
     <div>Жизни: <span id="lives" class="value">❤️</span></div>
     <div>Рекорд: <span id="bestScore" class="value">0</span></div>
+    <div>Миссия: <span id="mission" class="value">—</span></div>
   </div>
 
   <!-- Предупреждение об опасной зоне -->
@@ -372,7 +399,7 @@
 </div>
 
 <script>
-  /* ===== Firebase init c твоим config ===== */
+  /* ===== Firebase init ===== */
   const firebaseConfig = {
     apiKey: "AIzaSyBNfjarQbrPjloE--eAtl-RXeW11uPPXdc",
     authDomain: "coffe-drom.firebaseapp.com",
@@ -388,6 +415,65 @@
   const bestScoreRef = db.ref('coffeeRacer/globalBestScore');
   const scoresRef = db.ref('coffeeRacer/scores');
 
+  /* ===== Game State & Config ===== */
+  const GAME_STATES = {
+    INTRO: 'intro',
+    RUNNING: 'running',
+    GAME_OVER: 'gameOver'
+  };
+
+  const ENTITY_TYPES = {
+    ENEMY: 'enemy',
+    BONUS_COFFEE: 'bonus_coffee',
+    BONUS_HEART: 'bonus_heart',
+    HAZARD_MILK: 'hazard_milk'
+  };
+
+  const ENEMY_VARIANTS = {
+    NORMAL: 'normal',
+    SLOW_TRUCK: 'slow_truck',
+    FAST_BIKE: 'fast_bike'
+  };
+
+  const MISSION_TYPES = {
+    SURVIVE: 'survive',
+    COLLECT_COFFEE: 'collect_coffee',
+    AGGRESSIVE: 'aggressive'
+  };
+
+  const GAME_CONFIG = {
+    baseSpeed: 3,
+    maxSpeed: 9,
+    spawnIntervalStart: 900,
+    spawnIntervalMin: 450,
+    scoreForSpeedUp: 10,
+    speedStep: 0.2,
+
+    nitro: {
+      duration: 2500,
+      cooldown: 6000,
+      multiplier: 2.2
+    },
+
+    slowMotion: {
+      duration: 1200,
+      factor: 0.5
+    },
+
+    skid: {
+      duration: 900,
+      force: 4
+    },
+
+    bonuses: {
+      coffeeChance: 0.15,
+      milkChance: 0.10,
+      heartChance: 0.3
+    }
+  };
+
+  let gameState = GAME_STATES.INTRO;
+
   /* ===== DOM ===== */
   const road = document.getElementById('road');
   const raceCar = document.getElementById('raceCar');
@@ -398,6 +484,7 @@
   const livesEl = document.getElementById('lives');
   const bestScoreEl = document.getElementById('bestScore');
   const playerNameLabel = document.getElementById('playerNameLabel');
+  const missionLabel = document.getElementById('mission');
 
   const introScreen = document.getElementById('introScreen');
   const introBtn = document.getElementById('introBtn');
@@ -429,13 +516,13 @@
   const ROAD_MARGIN = 0;
 
   let laneLines = [];
-  let enemies = [];
-  let bonuses = [];
+  let entities = [];
+
   let score = 0;
-  let speed = 3;
-  let maxSpeed = 9;
+  let speed = GAME_CONFIG.baseSpeed;
+  let maxSpeed = GAME_CONFIG.maxSpeed;
   let lastSpawn = 0;
-  let spawnInterval = 900;
+  let spawnInterval = GAME_CONFIG.spawnIntervalStart;
   let moveDirection = 0;
   const moveStep = 6;
   let running = false;
@@ -445,31 +532,114 @@
   const maxLives = 3;
   let invulnerableUntil = 0;
 
-  let bestScore = 0;
+  let bestScore = 0; // глобальный рекорд из Firebase
 
   // Nitro
   let isNitroActive = false;
   let nitroEndTime = 0;
   let nitroCooldownEndTime = 0;
-  const NITRO_DURATION = 2500;
-  const NITRO_COOLDOWN = 6000;
-  const NITRO_MULTIPLIER = 2.2;
 
   // Slow-motion
   let isSlowMotionActive = false;
   let slowMotionEndTime = 0;
-  const SLOW_MOTION_DURATION = 1200;
-  const SLOW_MOTION_FACTOR = 0.5;
 
   // Skid (лужа)
   let skidActive = false;
   let skidDirection = 0;
   let skidEndTime = 0;
-  const SKID_DURATION = 900;
-  const SKID_FORCE = 4;
 
+  // Missions
+  let currentMission = null;
+
+  /* ===== HUD и сервисные функции ===== */
   function updateLivesHUD() {
     livesEl.textContent = lives > 0 ? '❤️'.repeat(lives) : '—';
+  }
+
+  function updateMissionHUD() {
+    if (!currentMission) {
+      missionLabel.textContent = '—';
+      return;
+    }
+    switch (currentMission.type) {
+      case MISSION_TYPES.SURVIVE:
+        missionLabel.textContent = `Выживи ${Math.round(currentMission.durationMs / 1000)} сек`;
+        break;
+      case MISSION_TYPES.COLLECT_COFFEE:
+        missionLabel.textContent = `Собери кофе: ${currentMission.progress}/${currentMission.target}`;
+        break;
+      case MISSION_TYPES.AGGRESSIVE:
+        missionLabel.textContent = `Смелые обгоны: ${currentMission.progress}/${currentMission.target}`;
+        break;
+      default:
+        missionLabel.textContent = '—';
+    }
+  }
+
+  function startRandomMission() {
+    const r = Math.random();
+    if (r < 0.33) {
+      currentMission = {
+        type: MISSION_TYPES.SURVIVE,
+        durationMs: 25000,
+        startedAt: performance.now(),
+        completed: false
+      };
+    } else if (r < 0.66) {
+      currentMission = {
+        type: MISSION_TYPES.COLLECT_COFFEE,
+        target: 3,
+        progress: 0,
+        completed: false
+      };
+    } else {
+      currentMission = {
+        type: MISSION_TYPES.AGGRESSIVE,
+        target: 6,
+        progress: 0,
+        completed: false
+      };
+    }
+    updateMissionHUD();
+  }
+
+  function completeMission() {
+    if (!currentMission || currentMission.completed) return;
+    currentMission.completed = true;
+
+    // Награда за миссию
+    score += 15;
+    scoreEl.textContent = score;
+    vibrate([80, 40, 80]);
+    showFloatingText('+15 за миссию', raceCar.offsetLeft + 10, raceCar.offsetTop - 10);
+
+    // Запускаем новую миссию через паузу
+    setTimeout(() => {
+      startRandomMission();
+    }, 1500);
+  }
+
+  function setGameState(newState) {
+    gameState = newState;
+
+    switch (newState) {
+      case GAME_STATES.INTRO:
+        introScreen.style.display = 'flex';
+        gameOver.style.display = 'none';
+        running = false;
+        break;
+      case GAME_STATES.RUNNING:
+        introScreen.style.display = 'none';
+        gameOver.style.display = 'none';
+        running = true;
+        lastTime = performance.now();
+        requestAnimationFrame(gameLoop);
+        break;
+      case GAME_STATES.GAME_OVER:
+        running = false;
+        gameOver.style.display = 'flex';
+        break;
+    }
   }
 
   function loadGlobalBestScore() {
@@ -487,12 +657,12 @@
     });
   }
 
-  function updateGlobalBestScoreIfNeeded(score) {
+  function updateGlobalBestScoreIfNeeded(scoreValue) {
     bestScoreRef.transaction(current => {
       if (current === null || typeof current !== 'number') {
-        return score;
+        return scoreValue;
       }
-      return score > current ? score : current;
+      return scoreValue > current ? scoreValue : current;
     }).then(result => {
       if (result.committed) {
         const newBest = result.snapshot.val();
@@ -505,10 +675,11 @@
     });
   }
 
-  function submitScore(name, score) {
+  function submitScore(name, scoreValue) {
+    const safeScore = Math.min(scoreValue, 10000); // мягкий лимит
     return scoresRef.push({
       name: name || 'Гость',
-      score,
+      score: safeScore,
       ts: firebase.database.ServerValue.TIMESTAMP
     });
   }
@@ -578,11 +749,43 @@
     raceCar.style.left = x + 'px';
   }
 
-  /* ===== Спавн врагов и бонусов ===== */
-  function spawnEnemy() {
-    const enemy = document.createElement('div');
-    enemy.className = 'enemy';
+  /* ===== Сущности ===== */
+  function createEntity({ type, x, y, variant }) {
+    const el = document.createElement('div');
 
+    switch (type) {
+      case ENTITY_TYPES.ENEMY:
+        el.className = 'enemy';
+        break;
+      case ENTITY_TYPES.BONUS_COFFEE:
+        el.className = 'bonus';
+        el.textContent = '☕';
+        break;
+      case ENTITY_TYPES.BONUS_HEART:
+        el.className = 'bonus heart';
+        el.textContent = '❤️';
+        break;
+      case ENTITY_TYPES.HAZARD_MILK:
+        el.className = 'milk';
+        break;
+    }
+
+    el.style.left = x + 'px';
+    el.style.top = y + 'px';
+    road.appendChild(el);
+
+    return {
+      type,
+      variant: variant || null,
+      el,
+      x,
+      y,
+      counted: false,
+      meta: {}
+    };
+  }
+
+  function spawnEnemy() {
     const { innerWidth } = getRoadInnerMetrics();
     const lanes = [
       innerWidth * 0.22,
@@ -591,51 +794,78 @@
     ];
     const lane = lanes[Math.floor(Math.random() * lanes.length)];
 
-    enemy.style.left = (lane - enemy.offsetWidth / 2) + 'px';
-    enemy.style.top = '-90px';
-    road.appendChild(enemy);
-    enemies.push({ el: enemy, y: -90, counted: false });
+    // Выбор варианта врага
+    const r = Math.random();
+    let variant = ENEMY_VARIANTS.NORMAL;
+    if (r < 0.15) {
+      variant = ENEMY_VARIANTS.SLOW_TRUCK;
+    } else if (r < 0.30) {
+      variant = ENEMY_VARIANTS.FAST_BIKE;
+    }
 
-    if (Math.random() < 0.15) {
+    const enemy = createEntity({
+      type: ENTITY_TYPES.ENEMY,
+      x: lane - 20,
+      y: -90,
+      variant
+    });
+
+    // визуальные отличия
+    if (variant === ENEMY_VARIANTS.SLOW_TRUCK) {
+      enemy.el.style.height = '90px';
+      enemy.el.style.background = '#6d4c41';
+    } else if (variant === ENEMY_VARIANTS.FAST_BIKE) {
+      enemy.el.style.width = '24px';
+      enemy.el.style.background = '#ffeb3b';
+    }
+
+    entities.push(enemy);
+
+    if (Math.random() < GAME_CONFIG.bonuses.coffeeChance) {
       spawnBonus();
     }
-    if (Math.random() < 0.10) {
+    if (Math.random() < GAME_CONFIG.bonuses.milkChance) {
       spawnMilk();
     }
   }
 
   function spawnBonus() {
-    const bonus = document.createElement('div');
     const { innerWidth } = getRoadInnerMetrics();
 
-    const isHeart = Math.random() < 0.3;
-    bonus.className = 'bonus' + (isHeart ? ' heart' : '');
-    bonus.dataset.type = isHeart ? 'heart' : 'coffee';
-    bonus.textContent = isHeart ? '❤️' : '☕';
+    const isHeart = Math.random() < GAME_CONFIG.bonuses.heartChance;
+    const type = isHeart ? ENTITY_TYPES.BONUS_HEART : ENTITY_TYPES.BONUS_COFFEE;
 
     const minX = ROAD_MARGIN + 10;
     const maxX = innerWidth - ROAD_MARGIN - 10;
     const left = minX + Math.random() * (maxX - minX);
-    bonus.style.left = left + 'px';
-    bonus.style.top = '-60px';
 
-    road.appendChild(bonus);
-    bonuses.push({ el: bonus, y: -60 });
+    const bonus = createEntity({
+      type,
+      x: left,
+      y: -60
+    });
+
+    entities.push(bonus);
   }
 
   function spawnMilk() {
-    const milk = document.createElement('div');
-    milk.className = 'milk';
-    milk.dataset.type = 'milk';
-
     const { innerWidth } = getRoadInnerMetrics();
     const minX = ROAD_MARGIN + 10;
     const maxX = innerWidth - ROAD_MARGIN - 50;
-    milk.style.left = (minX + Math.random() * (maxX - minX)) + 'px';
-    milk.style.top = '-60px';
+    const left = minX + Math.random() * (maxX - minX);
 
-    road.appendChild(milk);
-    bonuses.push({ el: milk, y: -60 });
+    const milk = createEntity({
+      type: ENTITY_TYPES.HAZARD_MILK,
+      x: left,
+      y: -60
+    });
+
+    entities.push(milk);
+  }
+
+  function removeEntity(index) {
+    entities[index].el.remove();
+    entities.splice(index, 1);
   }
 
   function isColliding(a, b) {
@@ -701,6 +931,15 @@
   /* ===== Nitro + шкала ===== */
   let lastTapTime = 0;
 
+  function setNitroReadyVisual(isReady) {
+    if (!nitroBarFill) return;
+    if (isReady) {
+      nitroBarFill.classList.add('ready');
+    } else {
+      nitroBarFill.classList.remove('ready');
+    }
+  }
+
   raceCar.addEventListener('pointerdown', (e) => {
     if (!running) return;
     const now = performance.now();
@@ -723,8 +962,9 @@
     if (isNitroActive) return;
     if (now < nitroCooldownEndTime) return;
     isNitroActive = true;
-    nitroEndTime = now + NITRO_DURATION;
+    nitroEndTime = now + GAME_CONFIG.nitro.duration;
     gameEl.classList.add('nitro-mode');
+    raceCar.classList.add('nitro-trail');
   }
 
   function updateNitroBar(timestamp) {
@@ -735,11 +975,11 @@
 
     if (isNitroActive) {
       const remaining = Math.max(0, nitroEndTime - timestamp);
-      ratio = remaining / NITRO_DURATION;
+      ratio = remaining / GAME_CONFIG.nitro.duration;
       opacity = 1;
     } else if (timestamp < nitroCooldownEndTime) {
-      const elapsed = NITRO_COOLDOWN - (nitroCooldownEndTime - timestamp);
-      ratio = Math.max(0, Math.min(1, elapsed / NITRO_COOLDOWN));
+      const elapsed = GAME_CONFIG.nitro.cooldown - (nitroCooldownEndTime - timestamp);
+      ratio = Math.max(0, Math.min(1, elapsed / GAME_CONFIG.nitro.cooldown));
       opacity = 0.6;
     } else {
       ratio = 1;
@@ -748,13 +988,16 @@
 
     nitroBarFill.style.height = (ratio * 100) + '%';
     nitroBarFill.style.opacity = opacity;
+
+    const nitroReady = !isNitroActive && timestamp >= nitroCooldownEndTime;
+    setNitroReadyVisual(nitroReady);
   }
 
   /* ===== Skid от молока ===== */
   function activateSkid(timestamp) {
     skidActive = true;
     skidDirection = Math.random() < 0.5 ? -1 : 1;
-    skidEndTime = timestamp + SKID_DURATION;
+    skidEndTime = timestamp + GAME_CONFIG.skid.duration;
 
     gameEl.style.filter = "brightness(1.2)";
     setTimeout(() => {
@@ -765,17 +1008,12 @@
   /* ===== Slow motion ===== */
   function triggerSlowMotion(timestamp) {
     isSlowMotionActive = true;
-    slowMotionEndTime = timestamp + SLOW_MOTION_DURATION;
+    slowMotionEndTime = timestamp + GAME_CONFIG.slowMotion.duration;
     gameEl.classList.add('slow-motion');
   }
 
-  function handleCollision(timestamp, enemyIndex) {
+  function handleCollision(timestamp) {
     if (timestamp < invulnerableUntil) return;
-
-    if (enemyIndex != null && enemies[enemyIndex]) {
-      enemies[enemyIndex].el.remove();
-      enemies.splice(enemyIndex, 1);
-    }
 
     lives--;
     updateLivesHUD();
@@ -788,27 +1026,201 @@
     }
   }
 
+  /* ===== Floating text ===== */
+  function showFloatingText(text, x, y) {
+    const el = document.createElement('div');
+    el.textContent = text;
+    el.style.position = 'absolute';
+    el.style.left = x + 'px';
+    el.style.top = y + 'px';
+    el.style.fontSize = '12px';
+    el.style.pointerEvents = 'none';
+    el.style.textShadow = '0 0 4px #000';
+    el.style.whiteSpace = 'nowrap';
+    road.appendChild(el);
+
+    el.animate([
+      { transform: 'translateY(0)', opacity: 1 },
+      { transform: 'translateY(-20px)', opacity: 0 }
+    ], { duration: 600, easing: 'ease-out' });
+
+    setTimeout(() => el.remove(), 650);
+  }
+
   /* ===== Основной апдейт ===== */
-  function updateGame(timestamp, delta) {
+  function updateEntities(timestamp, effectiveSpeed, playerRect, playerCenterX) {
+    const roadRect = road.getBoundingClientRect();
+    let hazardActive = false;
+
+    for (let i = entities.length - 1; i >= 0; i--) {
+      const ent = entities[i];
+
+      // Скорость в зависимости от типа/варианта
+      if (ent.type === ENTITY_TYPES.ENEMY) {
+        let mul = 2.2;
+        if (ent.variant === ENEMY_VARIANTS.SLOW_TRUCK) {
+          mul = 1.5;
+        } else if (ent.variant === ENEMY_VARIANTS.FAST_BIKE) {
+          mul = 3.0;
+          // шанс смены полосы
+          if (Math.random() < 0.008) {
+            const { innerWidth } = getRoadInnerMetrics();
+            const lanes = [
+              innerWidth * 0.22,
+              innerWidth * 0.5,
+              innerWidth * 0.78
+            ];
+            const newLane = lanes[Math.floor(Math.random() * lanes.length)];
+            ent.x = newLane - (ent.el.offsetWidth / 2 || 12);
+            ent.el.style.left = ent.x + 'px';
+          }
+        }
+        ent.y += effectiveSpeed * mul;
+      } else {
+        ent.y += effectiveSpeed * 1.4;
+      }
+      ent.el.style.top = ent.y + 'px';
+
+      const rect = ent.el.getBoundingClientRect();
+
+      switch (ent.type) {
+        case ENTITY_TYPES.ENEMY: {
+          // коллизия
+          if (isColliding(playerRect, rect)) {
+            handleCollision(timestamp);
+            removeEntity(i);
+            if (!running || lives <= 0) return false;
+            continue;
+          }
+
+          // засчитываем обгон
+          if (!ent.counted && rect.top > playerRect.bottom) {
+            const enemyCenterX = (rect.left + rect.right) / 2;
+            const dx = Math.abs(enemyCenterX - playerCenterX);
+            const closeThreshold = 18;
+            const gained = dx < closeThreshold ? 2 : 1;
+
+            score += gained;
+            scoreEl.textContent = score;
+
+            // анимация за смелый обгон
+            if (dx < closeThreshold) {
+              showFloatingText('+2', playerCenterX - roadRect.left - 6, playerRect.top - roadRect.top - 10);
+              // миссия "агрессивная"
+              if (currentMission && currentMission.type === MISSION_TYPES.AGGRESSIVE && !currentMission.completed) {
+                currentMission.progress++;
+                updateMissionHUD();
+                if (currentMission.progress >= currentMission.target) {
+                  completeMission();
+                }
+              }
+            }
+
+            // ускоряем игру
+            if (score > 0 && score % GAME_CONFIG.scoreForSpeedUp === 0 && speed < maxSpeed) {
+              speed += GAME_CONFIG.speedStep;
+              spawnInterval = Math.max(GAME_CONFIG.spawnIntervalMin, spawnInterval - 10);
+            }
+
+            // подсветка, что побит глобальный рекорд
+            if (score > bestScore) {
+              bestScoreEl.classList.add('beat-record');
+            }
+
+            ent.counted = true;
+          }
+          break;
+        }
+
+        case ENTITY_TYPES.BONUS_COFFEE: {
+          if (isColliding(playerRect, rect)) {
+            score += 5;
+            scoreEl.textContent = score;
+            vibrate(60);
+            triggerSlowMotion(timestamp);
+
+            // миссия "собрать кофе"
+            if (currentMission && currentMission.type === MISSION_TYPES.COLLECT_COFFEE && !currentMission.completed) {
+              currentMission.progress++;
+              updateMissionHUD();
+              if (currentMission.progress >= currentMission.target) {
+                completeMission();
+              }
+            }
+
+            removeEntity(i);
+            continue;
+          }
+          break;
+        }
+
+        case ENTITY_TYPES.BONUS_HEART: {
+          if (isColliding(playerRect, rect)) {
+            if (lives < maxLives) {
+              lives++;
+              updateLivesHUD();
+              vibrate(80);
+            }
+            removeEntity(i);
+            continue;
+          }
+          break;
+        }
+
+        case ENTITY_TYPES.HAZARD_MILK: {
+          const milkCenterX = (rect.left + rect.right) / 2;
+          const dxMilk = Math.abs(milkCenterX - playerCenterX);
+          const verticalAhead = rect.top > 0 && rect.top < playerRect.top;
+          if (dxMilk < 40 && verticalAhead) {
+            hazardActive = true;
+            ent.el.classList.add('hazard-highlight');
+          } else {
+            ent.el.classList.remove('hazard-highlight');
+          }
+
+          if (isColliding(playerRect, rect)) {
+            vibrate(40);
+            activateSkid(timestamp);
+            removeEntity(i);
+            continue;
+          }
+          break;
+        }
+      }
+
+      // Удаляем вышедшие за экран
+      if (ent.y > roadRect.height + 100) {
+        removeEntity(i);
+      }
+    }
+
+    hazardWarning.classList.toggle('show', hazardActive);
+    return true;
+  }
+
+  function updateGame(timestamp) {
     let speedFactor = 1;
 
+    // Slow-motion
     if (isSlowMotionActive) {
       if (timestamp >= slowMotionEndTime) {
         isSlowMotionActive = false;
         gameEl.classList.remove('slow-motion');
         gameEl.style.filter = "";
       } else {
-        speedFactor = SLOW_MOTION_FACTOR;
+        speedFactor *= GAME_CONFIG.slowMotion.factor;
       }
     }
 
+    // Nitro
     if (isNitroActive) {
       if (timestamp >= nitroEndTime) {
         isNitroActive = false;
-        nitroCooldownEndTime = timestamp + NITRO_COOLDOWN;
+        nitroCooldownEndTime = timestamp + GAME_CONFIG.nitro.cooldown;
         gameEl.classList.remove('nitro-mode');
+        raceCar.classList.remove('nitro-trail');
       } else {
-        speedFactor = NITRO_MULTIPLIER;
+        speedFactor *= GAME_CONFIG.nitro.multiplier;
       }
     }
 
@@ -818,6 +1230,7 @@
     const kmh = Math.round(effectiveSpeed * 20);
     speedEl.textContent = kmh;
 
+    // Разметка
     laneLines.forEach(line => {
       let top = parseFloat(line.style.top);
       top += effectiveSpeed * 2;
@@ -842,7 +1255,7 @@
       } else {
         const carWidth = raceCar.offsetWidth || 40;
         const { innerWidth } = getRoadInnerMetrics();
-        let x = raceCar.offsetLeft + skidDirection * SKID_FORCE;
+        let x = raceCar.offsetLeft + skidDirection * GAME_CONFIG.skid.force;
 
         if (x < ROAD_MARGIN) {
           x = ROAD_MARGIN;
@@ -857,101 +1270,20 @@
       }
     }
 
-    // враги
-    for (let i = enemies.length - 1; i >= 0; i--) {
-      const obj = enemies[i];
-      obj.y += effectiveSpeed * 2.2;
-      obj.el.style.top = obj.y + 'px';
-
-      const enemyRect = obj.el.getBoundingClientRect();
-
-      if (isColliding(playerRect, enemyRect)) {
-        handleCollision(timestamp, i);
-        if (!running || lives <= 0) return;
-        continue;
-      }
-
-      if (!obj.counted && enemyRect.top > playerRect.bottom) {
-        const enemyCenterX = (enemyRect.left + enemyRect.right) / 2;
-        const dx = Math.abs(enemyCenterX - playerCenterX);
-        const closeThreshold = 18;
-        const gained = dx < closeThreshold ? 2 : 1;
-
-        score += gained;
-        scoreEl.textContent = score;
-        obj.counted = true;
-
-        if (score > 0 && score % 10 === 0 && speed < maxSpeed) {
-          speed += 0.2;
-          spawnInterval = Math.max(450, spawnInterval - 10);
-        }
-      }
-
-      if (obj.y > roadRect.height + 100) {
-        obj.el.remove();
-        enemies.splice(i, 1);
+    // Миссия "выжить"
+    if (currentMission && currentMission.type === MISSION_TYPES.SURVIVE && !currentMission.completed) {
+      const now = performance.now();
+      if (now - currentMission.startedAt >= currentMission.durationMs) {
+        completeMission();
       }
     }
 
-    // бонусы (кофе, сердца, лужи)
-    let hazardActive = false;
-
-    for (let i = bonuses.length - 1; i >= 0; i--) {
-      const obj = bonuses[i];
-      obj.y += effectiveSpeed * 1.4;
-      obj.el.style.top = obj.y + 'px';
-
-      const bonusRect = obj.el.getBoundingClientRect();
-      const type = obj.el.dataset.type || 'coffee';
-
-      // предупреждение об опасной зоне для луж
-      if (type === 'milk') {
-        const milkCenterX = (bonusRect.left + bonusRect.right) / 2;
-        const dx = Math.abs(milkCenterX - playerCenterX);
-        const verticalAhead = bonusRect.top > 0 && bonusRect.top < playerRect.top;
-        if (dx < 40 && verticalAhead) {
-          hazardActive = true;
-          obj.el.classList.add('hazard-highlight');
-        } else {
-          obj.el.classList.remove('hazard-highlight');
-        }
-      }
-
-      if (isColliding(playerRect, bonusRect)) {
-        if (type === 'coffee') {
-          score += 5;
-          scoreEl.textContent = score;
-          vibrate(60);
-          triggerSlowMotion(timestamp);
-        } else if (type === 'heart') {
-          if (lives < maxLives) {
-            lives++;
-            updateLivesHUD();
-            vibrate(80);
-          }
-        } else if (type === 'milk') {
-          vibrate(40);
-          activateSkid(timestamp);
-        }
-
-        obj.el.remove();
-        bonuses.splice(i, 1);
-        continue;
-      }
-
-      if (obj.y > roadRect.height + 80) {
-        obj.el.remove();
-        bonuses.splice(i, 1);
-      }
+    // Обновляем сущности
+    if (!updateEntities(timestamp, effectiveSpeed, playerRect, playerCenterX)) {
+      return;
     }
 
-    // показать / спрятать предупреждение
-    if (hazardActive) {
-      hazardWarning.classList.add('show');
-    } else {
-      hazardWarning.classList.remove('show');
-    }
-
+    // Спавн
     if (timestamp - lastSpawn > spawnInterval) {
       spawnEnemy();
       lastSpawn = timestamp;
@@ -962,23 +1294,22 @@
     if (!running) return;
     const delta = timestamp - lastTime;
     lastTime = timestamp;
-
     updateGame(timestamp, delta);
-
     requestAnimationFrame(gameLoop);
   }
 
   function startGame() {
-    enemies.forEach(e => e.el.remove());
-    enemies = [];
-    bonuses.forEach(b => b.el.remove());
-    bonuses = [];
+    // очистка сущностей
+    entities.forEach(e => e.el.remove());
+    entities = [];
+
     score = 0;
-    speed = 3;
-    spawnInterval = 900;
+    speed = GAME_CONFIG.baseSpeed;
+    spawnInterval = GAME_CONFIG.spawnIntervalStart;
     moveDirection = 0;
     scoreEl.textContent = score;
     speedEl.textContent = '0';
+    bestScoreEl.classList.remove('beat-record');
 
     lives = 1;
     invulnerableUntil = 0;
@@ -992,6 +1323,7 @@
     coffeeMsg.textContent = '';
     hazardWarning.classList.remove('show');
 
+    // эффекты
     isNitroActive = false;
     nitroEndTime = 0;
     nitroCooldownEndTime = 0;
@@ -1001,14 +1333,17 @@
     gameEl.classList.remove('nitro-mode');
     gameEl.classList.remove('slow-motion');
     gameEl.style.filter = "";
+    raceCar.classList.remove('nitro-trail');
     updateNitroBar(performance.now());
+
+    // миссия
+    startRandomMission();
 
     loadGlobalBestScore();
 
     running = true;
     lastTime = performance.now();
     lastSpawn = lastTime;
-    requestAnimationFrame(gameLoop);
   }
 
   function endGame() {
@@ -1034,13 +1369,16 @@
 
     commentEl.textContent = text;
     coffeeMsg.textContent = '';
-    gameOver.style.display = 'flex';
+
+    setGameState(GAME_STATES.GAME_OVER);
   }
 
+  /* ===== Кнопки экрана Game Over ===== */
   coffeeNotReadyBtn.onclick = () => {
     coffeeMsg.textContent = 'Попробуй ещё раз, если кофе ещё не готов ☕';
     setTimeout(() => {
       startGame();
+      setGameState(GAME_STATES.RUNNING);
     }, 1200);
   };
 
@@ -1051,14 +1389,16 @@
   restartBtn.onclick = () => {
     coffeeMsg.textContent = '';
     startGame();
+    setGameState(GAME_STATES.RUNNING);
   };
 
+  /* ===== Старт с интро ===== */
   introBtn.onclick = () => {
     const name = (playerNameInput.value || '').trim();
     playerName = name || 'Гость';
     playerNameLabel.textContent = playerName;
-    introScreen.style.display = 'none';
     startGame();
+    setGameState(GAME_STATES.RUNNING);
   };
 
   /* ===== Блокировка скролла и зума ===== */
